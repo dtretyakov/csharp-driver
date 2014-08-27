@@ -14,6 +14,8 @@
 //   limitations under the License.
 //
 
+using System;
+
 namespace Cassandra
 {
     /// <summary>
@@ -22,9 +24,13 @@ namespace Cassandra
     /// </summary>
     public class SocketOptions
     {
+        [Obsolete("This constant will be removed in the upcoming version")]
         public const int DefaultConnectTimeoutMillis = 5000;
 
-        private int _connectTimeoutMillis = DefaultConnectTimeoutMillis;
+        private TimeSpan _idleTimeout = TimeSpan.Zero;
+        private TimeSpan _receiveTimeout = TimeSpan.Zero;
+        private TimeSpan _sendTimeout = TimeSpan.FromSeconds(5);
+        
         private bool? _keepAlive = true;
         private int? _receiveBufferSize;
         private bool? _reuseAddress;
@@ -33,9 +39,34 @@ namespace Cassandra
         private bool? _tcpNoDelay;
         private bool _useStreamMode;
 
+        [Obsolete("This property will be removed in the upcoming version")]
         public int ConnectTimeoutMillis
         {
-            get { return _connectTimeoutMillis; }
+            get { return (int) _sendTimeout.TotalMilliseconds; }
+        }
+
+        /// <summary>
+        /// Gets an idle timeout for connection.
+        /// </summary>
+        public TimeSpan IdleTimeout
+        {
+            get { return _idleTimeout; }
+        }
+        
+        /// <summary>
+        /// Gets a receive timeout for connection.
+        /// </summary>
+        public TimeSpan ReceiveTimeout
+        {
+            get { return _receiveTimeout; }
+        }
+        
+        /// <summary>
+        /// Gets a send timeout for connection.
+        /// </summary>
+        public TimeSpan SendTimeout
+        {
+            get { return _sendTimeout; }
         }
 
         public bool? KeepAlive
@@ -77,9 +108,46 @@ namespace Cassandra
             get { return _useStreamMode; }
         }
 
+        [Obsolete("This method will be removed in the upcoming version")]
         public SocketOptions SetConnectTimeoutMillis(int connectTimeoutMillis)
         {
-            _connectTimeoutMillis = connectTimeoutMillis;
+            _sendTimeout = TimeSpan.FromMilliseconds(connectTimeoutMillis);
+            return this;
+        }
+        
+        /// <summary>
+        /// Sets an idle timeout for connection.
+        /// </summary>
+        /// <remarks>If set <c>TimeSpan.Zero</c> or negative value infinite timeout will be used.</remarks>
+        /// <param name="timeout">Timeout value.</param>
+        /// <returns>This socket options.</returns>
+        public SocketOptions SetIdleTimeout(TimeSpan timeout)
+        {
+            _idleTimeout = timeout;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a receive timeout for connection.
+        /// </summary>
+        /// <remarks>If set <c>TimeSpan.Zero</c> or negative value infinite timeout will be used.</remarks>
+        /// <param name="timeout">Timeout value.</param>
+        /// <returns>This socket options.</returns>
+        public SocketOptions SetReceiveTimeout(TimeSpan timeout)
+        {
+            _receiveTimeout = timeout;
+            return this;
+        }
+        
+        /// <summary>
+        /// Sets a send timeout for connection.
+        /// </summary>
+        /// <remarks>If set <c>TimeSpan.Zero</c> or negative value infinite timeout will be used.</remarks>
+        /// <param name="timeout">Timeout value.</param>
+        /// <returns>This socket options.</returns>
+        public SocketOptions SetSendTimeout(TimeSpan timeout)
+        {
+            _sendTimeout = timeout;
             return this;
         }
 

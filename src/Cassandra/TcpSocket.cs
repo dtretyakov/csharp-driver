@@ -1,12 +1,9 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
+using System.Threading;
 
 namespace Cassandra
 {
@@ -18,13 +15,14 @@ namespace Cassandra
     /// </summary>
     internal class TcpSocket
     {
-        private static Logger _logger = new Logger(typeof(TcpSocket));
+        private static readonly Logger _logger = new Logger(typeof(TcpSocket));
         private Socket _socket;
         private SocketAsyncEventArgs _receiveSocketEvent;
         private SocketAsyncEventArgs _sendSocketEvent;
         private Stream _socketStream;
         private byte[] _receiveBuffer;
-        private volatile bool _isClosing = false;
+        private volatile bool _isClosing;
+        private Timer _idleTimer;
         
         public IPEndPoint IPEndPoint { get; protected set; }
 
@@ -54,9 +52,9 @@ namespace Cassandra
         /// </summary>
         public TcpSocket(IPEndPoint ipEndPoint, SocketOptions options, SSLOptions sslOptions)
         {
-            this.IPEndPoint = ipEndPoint;
-            this.Options = options;
-            this.SSLOptions = sslOptions;
+            IPEndPoint = ipEndPoint;
+            Options = options;
+            SSLOptions = sslOptions;
         }
 
         /// <summary>
@@ -64,13 +62,16 @@ namespace Cassandra
         /// </summary>
         public void Init()
         {
-            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+            {
+                SendTimeout = (int) Options.SendTimeout.TotalMilliseconds,
+                ReceiveTimeout = (int) Options.ReceiveTimeout.TotalMilliseconds
+            };
+
             if (Options.KeepAlive != null)
             {
                 _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, Options.KeepAlive.Value);
             }
-
-            _socket.SendTimeout = Options.ConnectTimeoutMillis;
             if (Options.SoLinger != null)
             {
                 _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Linger, new LingerOption(true, Options.SoLinger.Value));
@@ -87,7 +88,17 @@ namespace Cassandra
             {
                 _socket.NoDelay = Options.TcpNoDelay.Value;
             }
+            if (Options.IdleTimeout > TimeSpan.Zero)
+            {
+                _idleTimer = _idleTimer ?? new Timer(Disconnect);
+            }
             _receiveBuffer = new byte[_socket.ReceiveBufferSize];
+        }
+
+        private void Disconnect(object state)
+        {
+            _logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", IPEndPoint));
+            Dispose();
         }
 
         /// <summary>
@@ -97,7 +108,7 @@ namespace Cassandra
         public void Connect()
         {
             var connectResult = _socket.BeginConnect(IPEndPoint, null, null);
-            var connectSignaled = connectResult.AsyncWaitHandle.WaitOne(Options.ConnectTimeoutMillis);
+            var connectSignaled = connectResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
 
             if (!connectSignaled)
             {
@@ -113,7 +124,7 @@ namespace Cassandra
             //There are 2 modes: using SocketAsyncEventArgs (most performant) and Stream mode with APM methods
             if (SSLOptions == null && !Options.UseStreamMode)
             {
-                _logger.Verbose("Socket connected, start reading using SocketEventArgs interface");
+                _logger.Verbose(String.Format("Connection {0}: socket connected, start reading using SocketEventArgs interface.", IPEndPoint));
                 //using SocketAsyncEventArgs
                 _receiveSocketEvent = new SocketAsyncEventArgs();
                 _receiveSocketEvent.SetBuffer(_receiveBuffer, 0, _receiveBuffer.Length);
@@ -123,12 +134,12 @@ namespace Cassandra
             }
             else
             {
-                _logger.Verbose("Socket connected, start reading using Stream interface");
+                _logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", IPEndPoint));
                 //Stream mode: not the most performant but it has ssl support
                 _socketStream = new NetworkStream(_socket);
                 if (SSLOptions != null)
                 {
-                    string targetHost = targetHost = IPEndPoint.Address.ToString();
+                    string targetHost = IPEndPoint.Address.ToString();
                     try
                     {
                         targetHost = SSLOptions.HostNameResolver(IPEndPoint.Address);
@@ -137,20 +148,41 @@ namespace Cassandra
                     {
                         _logger.Error(String.Format("SSL connection: Can not resolve host name for address {0}. Using the IP address instead of the host name. This may cause RemoteCertificateNameMismatch error during Cassandra host authentication. Note that the Cassandra node SSL certificate's CN(Common Name) must match the Cassandra node hostname.", targetHost), ex);
                     }
-                    _socketStream = new SslStream(_socketStream, false, SSLOptions.RemoteCertValidationCallback, null);
-                    var sslAuthResult = (_socketStream as SslStream).BeginAuthenticateAsClient(targetHost, SSLOptions.CertificateCollection, SSLOptions.SslProtocol, SSLOptions.CheckCertificateRevocation, null, null);
-                    var sslAuthSignaled = sslAuthResult.AsyncWaitHandle.WaitOne(Options.ConnectTimeoutMillis);
+                    var sslStream = new SslStream(_socketStream, false, SSLOptions.RemoteCertValidationCallback, null);
+                    var sslAuthResult = sslStream.BeginAuthenticateAsClient(targetHost, SSLOptions.CertificateCollection, SSLOptions.SslProtocol, SSLOptions.CheckCertificateRevocation, null, null);
+                    var sslAuthSignaled = sslAuthResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
                     if (!sslAuthSignaled)
                     {
                         //It timed out: Close the socket and throw the exception
                         _socket.Close();
                         throw new SocketException((int)SocketError.TimedOut);
                     }
-                    (_socketStream as SslStream).EndAuthenticateAsClient(sslAuthResult);
+                    sslStream.EndAuthenticateAsClient(sslAuthResult);
+                    _socketStream = sslStream;
                 }
             }
 
             ReceiveAsync();
+        }
+
+        private void ResetIdleTimer()
+        {
+            var idleTimer = _idleTimer;
+            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
+            {
+                idleTimer.Change(Options.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
+                _logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", IPEndPoint));
+            }
+        }
+        
+        private void StopIdleTimer()
+        {
+            var idleTimer = _idleTimer;
+            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
+            {
+                idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                _logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", IPEndPoint));
+            }
         }
 
         /// <summary>
@@ -179,12 +211,14 @@ namespace Cassandra
             else
             {
                 //Stream mode
-                _socketStream.BeginRead(_receiveBuffer, 0, _receiveBuffer.Length, new AsyncCallback(OnReceiveStreamCallback), null);
+                _socketStream.BeginRead(_receiveBuffer, 0, _receiveBuffer.Length, OnReceiveStreamCallback, null);
             }
         }
 
         protected virtual void OnError(Exception ex, SocketError? socketError = null)
         {
+            StopIdleTimer();
+
             if (Error != null)
             {
                 Error(ex, socketError);
@@ -202,7 +236,7 @@ namespace Cassandra
                 OnError(null, e.SocketError);
                 return;
             }
-            else if (e.BytesTransferred == 0)
+            if (e.BytesTransferred == 0)
             {
                 OnClosing();
                 return;
@@ -214,6 +248,7 @@ namespace Cassandra
                 Read(e.Buffer, e.BytesTransferred);
             }
 
+            ResetIdleTimer();
             ReceiveAsync();
         }
 
@@ -235,13 +270,15 @@ namespace Cassandra
                 {
                     Read(_receiveBuffer, bytesRead);
                 }
+
+                ResetIdleTimer();
                 ReceiveAsync();
             }
             catch (Exception ex)
             {
                 if (ex is IOException && ex.InnerException is SocketException)
                 {
-                    OnError((SocketException)ex.InnerException);
+                    OnError(ex.InnerException);
                 }
                 else
                 {
@@ -278,7 +315,7 @@ namespace Cassandra
             {
                 if (ex is IOException && ex.InnerException is SocketException)
                 {
-                    OnError((SocketException)ex.InnerException);
+                    OnError(ex.InnerException);
                 }
                 else
                 {
@@ -298,6 +335,8 @@ namespace Cassandra
             {
                 Closing();
             }
+
+            StopIdleTimer();
         }
 
         /// <summary>
@@ -331,12 +370,19 @@ namespace Cassandra
             }
             else
             {
-                _socketStream.BeginWrite(buffer, 0, buffer.Length, new AsyncCallback(OnSendStreamCallback), null);
+                _socketStream.BeginWrite(buffer, 0, buffer.Length, OnSendStreamCallback, null);
             }
         }
 
         public void Dispose()
         {
+            // Dispose connection idle timer if required
+            var idleTimer = Interlocked.Exchange(ref _idleTimer, null);
+            if (idleTimer != null)
+            {
+                idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+
             try
             {
                 if (_socket == null)

@@ -103,7 +103,7 @@ namespace Cassandra
         {
             get
             {
-                return this._keyspace;
+                return _keyspace;
             }
             set
             {
@@ -111,21 +111,20 @@ namespace Cassandra
                 {
                     return;
                 }
-                if (this._keyspace != null && value == this._keyspace)
+                if (_keyspace != null && value == _keyspace)
                 {
                     return;
                 }
-                lock (this._keyspaceLock)
+                lock (_keyspaceLock)
                 {
-                    if (value == this._keyspace)
+                    if (value == _keyspace)
                     {
                         return;
                     }
                     _logger.Info("Connection to host " + Address + " switching to keyspace " + value);
-                    this._keyspace = value;
-                    var timeout = Configuration.SocketOptions.ConnectTimeoutMillis;
+                    _keyspace = value;
                     var request = new QueryRequest(ProtocolVersion, String.Format("USE \"{0}\"", value), false, QueryProtocolOptions.Default);
-                    TaskHelper.WaitToComplete(this.Send(request), timeout);
+                    TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
                 }
             }
         }
@@ -156,8 +155,8 @@ namespace Cassandra
 
         public Connection(byte protocolVersion, IPEndPoint endpoint, Configuration configuration)
         {
-            this.ProtocolVersion = protocolVersion;
-            this.Configuration = configuration;
+            ProtocolVersion = protocolVersion;
+            Configuration = configuration;
             _tcpSocket = new TcpSocket(endpoint, configuration.SocketOptions, configuration.ProtocolOptions.SslOptions);
         }
 
@@ -192,7 +191,7 @@ namespace Cassandra
                 var credentialsProvider = Configuration.AuthInfoProvider;
                 var credentials = credentialsProvider.GetAuthInfos(Address);
                 var request = new CredentialsRequest(ProtocolVersion, credentials);
-                var response = TaskHelper.WaitToComplete(this.Send(request), Configuration.SocketOptions.ConnectTimeoutMillis);
+                var response = TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
                 //If Cassandra replied with a auth response error
                 //The task already is faulted and the exception was already thrown.
                 if (response is ReadyResponse)
@@ -206,8 +205,8 @@ namespace Cassandra
         /// <exception cref="AuthenticationException" />
         private void Authenticate(byte[] token, IAuthenticator authenticator)
         {
-            var request = new AuthResponseRequest(this.ProtocolVersion, token);
-            var response = TaskHelper.WaitToComplete(this.Send(request), Configuration.SocketOptions.ConnectTimeoutMillis);
+            var request = new AuthResponseRequest(ProtocolVersion, token);
+            var response = TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
             if (response is AuthSuccessResponse)
             {
                 //It is now authenticated
@@ -261,7 +260,7 @@ namespace Cassandra
                 if (_writeQueue.Count > 0)
                 {
                     //Callback all the items in the write queue
-                    OperationState state = null;
+                    OperationState state;
                     while (_writeQueue.TryDequeue(out state))
                     {
                         state.InvokeCallback(ex);
@@ -300,9 +299,9 @@ namespace Cassandra
                 _logger.Error("Unexpected response type for event: " + response.GetType().Name);
                 return;
             }
-            if (this.CassandraEventResponse != null)
+            if (CassandraEventResponse != null)
             {
-                this.CassandraEventResponse(this, (response as EventResponse).CassandraEventArgs);
+                CassandraEventResponse(this, (response as EventResponse).CassandraEventArgs);
             }
         }
 
@@ -335,7 +334,7 @@ namespace Cassandra
             //Init TcpSocket
             _tcpSocket.Init();
             _tcpSocket.Error += CancelPending;
-            _tcpSocket.Closing += () => CancelPending(null, null);
+            _tcpSocket.Closing += () => CancelPending(null);
             _tcpSocket.Read += ReadHandler;
             _tcpSocket.WriteCompleted += WriteCompletedHandler;
             _tcpSocket.Connect();
@@ -343,7 +342,7 @@ namespace Cassandra
             var startupTask = Startup();
             try
             {
-                TaskHelper.WaitToComplete(startupTask, _tcpSocket.Options.ConnectTimeoutMillis);
+                TaskHelper.WaitToComplete(startupTask, _tcpSocket.Options.SendTimeout);
             }
             catch (ProtocolErrorException ex)
             {
@@ -510,7 +509,7 @@ namespace Cassandra
         public Task<AbstractResponse> Send(IRequest request)
         {
             var tcs = new TaskCompletionSource<AbstractResponse>();
-            this.Send(request, tcs.TrySet);
+            Send(request, tcs.TrySet);
             return tcs.Task;
         }
 
@@ -543,7 +542,7 @@ namespace Cassandra
                 _writeQueue.Enqueue(state);
                 return;
             }
-            short streamId = -1;
+            short streamId;
             lock (_writeQueueLock)
             {
                 if (!_canWriteNext)
