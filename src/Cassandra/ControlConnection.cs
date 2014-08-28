@@ -186,7 +186,7 @@ namespace Cassandra
             _activeConnection.Value = connection;
             _activeConnection.Value.CassandraEventResponse += conn_CassandraEvent;
             const CassandraEventType eventTypes = CassandraEventType.TopologyChange | CassandraEventType.StatusChange | CassandraEventType.SchemaChange;
-            var registerTask = _activeConnection.Value.Send(new RegisterForEventRequest(_controlConnectionProtocolVersion, eventTypes));
+            var registerTask = _activeConnection.Value.SendAsync(new RegisterForEventRequest(_controlConnectionProtocolVersion, eventTypes));
             TaskHelper.WaitToComplete(registerTask, 10000);
             if (!(registerTask.Result is ReadyResponse))
             {
@@ -466,7 +466,7 @@ namespace Cassandra
         private RowSet Query(string cqlQuery)
         {
             var request = new QueryRequest(_controlConnectionProtocolVersion, cqlQuery, false, QueryProtocolOptions.Default);
-            var task = _activeConnection.Value.Send(request);
+            var task = _activeConnection.Value.SendAsync(request);
             TaskHelper.WaitToComplete(task, 10000);
             if (!(task.Result is ResultResponse) && !(((ResultResponse)task.Result).Output is OutputRows))
             {

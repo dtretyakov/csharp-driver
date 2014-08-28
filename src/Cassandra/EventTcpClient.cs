@@ -4,68 +4,41 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Cassandra
 {
     /// <summary>
-    /// Represents a Tcp connection to a host.
-    /// It emits Read and WriteCompleted events when data is received.
-    /// Similar to Netty's Channel or Node.js's net.Socket
-    /// It handles TLS validation and encryption when required.
+    ///     Represents a Tcp connection to a host.
+    ///     It emits Read and WriteCompleted events when data is received.
+    ///     Similar to Netty's Channel or Node.js's net.Socket
+    ///     It handles TLS validation and encryption when required.
     /// </summary>
-    internal class TcpSocket
+    internal class EventTcpClient : ITcpClient
     {
-        private static readonly Logger _logger = new Logger(typeof(TcpSocket));
-        private Socket _socket;
+        private static readonly Logger Logger = new Logger(typeof (EventTcpClient));
+        private Timer _idleTimer;
+        private volatile bool _isClosing;
+        private byte[] _receiveBuffer;
         private SocketAsyncEventArgs _receiveSocketEvent;
         private SocketAsyncEventArgs _sendSocketEvent;
+        private Socket _socket;
         private Stream _socketStream;
-        private byte[] _receiveBuffer;
-        private volatile bool _isClosing;
-        private Timer _idleTimer;
-        
-        public IPEndPoint IPEndPoint { get; protected set; }
-
-        public SocketOptions Options { get; protected set; }
-
         public SSLOptions SSLOptions { get; set; }
 
         /// <summary>
-        /// Event that gets fired when new data is received.
+        ///     Creates a new instance of TcpSocket using the endpoint and options provided.
         /// </summary>
-        public event Action<byte[], int> Read;
-
-        /// <summary>
-        /// Event that gets fired when a write async request have been completed.
-        /// </summary>
-        public event Action WriteCompleted;
-
-        /// <summary>
-        /// Event that is fired when the host is closing the connection.
-        /// </summary>
-        public event Action Closing;
-
-        public event Action<Exception, SocketError?> Error; 
-
-        /// <summary>
-        /// Creates a new instance of TcpSocket using the endpoint and options provided.
-        /// </summary>
-        public TcpSocket(IPEndPoint ipEndPoint, SocketOptions options, SSLOptions sslOptions)
+        public EventTcpClient(IPEndPoint endPoint, SocketOptions options, SSLOptions sslOptions)
         {
-            IPEndPoint = ipEndPoint;
+            EndPoint = endPoint;
             Options = options;
             SSLOptions = sslOptions;
-        }
 
-        /// <summary>
-        /// Initializes the socket options
-        /// </summary>
-        public void Init()
-        {
             _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
             {
-                SendTimeout = (int) Options.SendTimeout.TotalMilliseconds,
-                ReceiveTimeout = (int) Options.ReceiveTimeout.TotalMilliseconds
+                SendTimeout = (int)Options.SendTimeout.TotalMilliseconds,
+                ReceiveTimeout = (int)Options.ReceiveTimeout.TotalMilliseconds
             };
 
             if (Options.KeepAlive != null)
@@ -92,29 +65,52 @@ namespace Cassandra
             {
                 _idleTimer = _idleTimer ?? new Timer(Disconnect);
             }
+
             _receiveBuffer = new byte[_socket.ReceiveBufferSize];
         }
 
+        public IPEndPoint EndPoint { get; protected set; }
+
+        public SocketOptions Options { get; protected set; }
+        public int ReceiveBufferSize { get; private set; }
+
+        /// <summary>
+        ///     Event that is fired when the host is closing the connection.
+        /// </summary>
+        public event Action Disconnected;
+
+        /// <summary>
+        ///     Event that gets fired when new data is received.
+        /// </summary>
+        public event Action<byte[], int> DataReceived;
+
+        /// <summary>
+        ///     Event that gets fired when a write async request have been completed.
+        /// </summary>
+        public event Action WriteCompleted;
+
+        public event Action<Exception, SocketError?> Error;
+
         private void Disconnect(object state)
         {
-            _logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", IPEndPoint));
+            Logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", EndPoint));
             Dispose();
         }
 
         /// <summary>
-        /// Connects synchronously to the host and starts reading
+        ///     Connects synchronously to the host and starts reading
         /// </summary>
         /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>
-        public void Connect()
+        public Task ConnectAsync()
         {
-            var connectResult = _socket.BeginConnect(IPEndPoint, null, null);
-            var connectSignaled = connectResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
+            IAsyncResult connectResult = _socket.BeginConnect(EndPoint, null, null);
+            bool connectSignaled = connectResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
 
             if (!connectSignaled)
             {
                 //It timed out: Close the socket and throw the exception
                 _socket.Close();
-                throw new SocketException((int)SocketError.TimedOut);
+                throw new SocketException((int) SocketError.TimedOut);
             }
             //End the connect process
             //It will throw exceptions in case there was a problem
@@ -124,7 +120,7 @@ namespace Cassandra
             //There are 2 modes: using SocketAsyncEventArgs (most performant) and Stream mode with APM methods
             if (SSLOptions == null && !Options.UseStreamMode)
             {
-                _logger.Verbose(String.Format("Connection {0}: socket connected, start reading using SocketEventArgs interface.", IPEndPoint));
+                Logger.Verbose(String.Format("Connection {0}: socket connected, start reading using SocketEventArgs interface.", EndPoint));
                 //using SocketAsyncEventArgs
                 _receiveSocketEvent = new SocketAsyncEventArgs();
                 _receiveSocketEvent.SetBuffer(_receiveBuffer, 0, _receiveBuffer.Length);
@@ -134,60 +130,74 @@ namespace Cassandra
             }
             else
             {
-                _logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", IPEndPoint));
+                Logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", EndPoint));
                 //Stream mode: not the most performant but it has ssl support
                 _socketStream = new NetworkStream(_socket);
                 if (SSLOptions != null)
                 {
-                    string targetHost = IPEndPoint.Address.ToString();
+                    string targetHost = EndPoint.Address.ToString();
                     try
                     {
-                        targetHost = SSLOptions.HostNameResolver(IPEndPoint.Address);
+                        targetHost = SSLOptions.HostNameResolver(EndPoint.Address);
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error(String.Format("SSL connection: Can not resolve host name for address {0}. Using the IP address instead of the host name. This may cause RemoteCertificateNameMismatch error during Cassandra host authentication. Note that the Cassandra node SSL certificate's CN(Common Name) must match the Cassandra node hostname.", targetHost), ex);
+                        Logger.Error(
+                            String.Format(
+                                "SSL connection: Can not resolve host name for address {0}. Using the IP address instead of the host name. This may cause RemoteCertificateNameMismatch error during Cassandra host authentication. Note that the Cassandra node SSL certificate's CN(Common Name) must match the Cassandra node hostname.",
+                                targetHost), ex);
                     }
                     var sslStream = new SslStream(_socketStream, false, SSLOptions.RemoteCertValidationCallback, null);
-                    var sslAuthResult = sslStream.BeginAuthenticateAsClient(targetHost, SSLOptions.CertificateCollection, SSLOptions.SslProtocol, SSLOptions.CheckCertificateRevocation, null, null);
-                    var sslAuthSignaled = sslAuthResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
+                    IAsyncResult sslAuthResult = sslStream.BeginAuthenticateAsClient(targetHost, SSLOptions.CertificateCollection,
+                        SSLOptions.SslProtocol, SSLOptions.CheckCertificateRevocation, null, null);
+                    bool sslAuthSignaled = sslAuthResult.AsyncWaitHandle.WaitOne(Options.SendTimeout);
                     if (!sslAuthSignaled)
                     {
                         //It timed out: Close the socket and throw the exception
                         _socket.Close();
-                        throw new SocketException((int)SocketError.TimedOut);
+                        throw new SocketException((int) SocketError.TimedOut);
                     }
                     sslStream.EndAuthenticateAsClient(sslAuthResult);
                     _socketStream = sslStream;
                 }
             }
 
-            ReceiveAsync();
+            return Task.FromResult(0);
+        }
+
+        public Task<int> ReadAsync(byte[] buffer, int offset, int count)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task WriteAsync(Stream stream)
+        {
+            throw new NotImplementedException();
         }
 
         private void ResetIdleTimer()
         {
-            var idleTimer = _idleTimer;
+            Timer idleTimer = _idleTimer;
             if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
             {
                 idleTimer.Change(Options.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
-                _logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", IPEndPoint));
+                Logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", EndPoint));
             }
         }
-        
+
         private void StopIdleTimer()
         {
-            var idleTimer = _idleTimer;
+            Timer idleTimer = _idleTimer;
             if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
             {
                 idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                _logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", IPEndPoint));
+                Logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", EndPoint));
             }
         }
 
         /// <summary>
-        /// Begins an asynchronous request to receive data from a connected Socket object.
-        /// It handles the exceptions in case there is one.
+        ///     Begins an asynchronous request to receive data from a connected Socket object.
+        ///     It handles the exceptions in case there is one.
         /// </summary>
         protected virtual void ReceiveAsync()
         {
@@ -226,7 +236,7 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Handles the receive completed event
+        ///     Handles the receive completed event
         /// </summary>
         protected void OnReceiveCompleted(object sender, SocketAsyncEventArgs e)
         {
@@ -243,9 +253,9 @@ namespace Cassandra
             }
 
             //Emit event
-            if (Read != null)
+            if (DataReceived != null)
             {
-                Read(e.Buffer, e.BytesTransferred);
+                DataReceived(e.Buffer, e.BytesTransferred);
             }
 
             ResetIdleTimer();
@@ -253,22 +263,22 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Handles the callback for BeginRead on Stream mode
+        ///     Handles the callback for BeginRead on Stream mode
         /// </summary>
         protected void OnReceiveStreamCallback(IAsyncResult ar)
         {
             try
             {
-                var bytesRead = _socketStream.EndRead(ar);
+                int bytesRead = _socketStream.EndRead(ar);
                 if (bytesRead == 0)
                 {
                     OnClosing();
                     return;
                 }
                 //Emit event
-                if (Read != null)
+                if (DataReceived != null)
                 {
-                    Read(_receiveBuffer, bytesRead);
+                    DataReceived(_receiveBuffer, bytesRead);
                 }
 
                 ResetIdleTimer();
@@ -288,7 +298,7 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Handles the send completed event
+        ///     Handles the send completed event
         /// </summary>
         protected void OnSendCompleted(object sender, SocketAsyncEventArgs e)
         {
@@ -303,7 +313,7 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Handles the callback for BeginWrite on Stream mode
+        ///     Handles the callback for BeginWrite on Stream mode
         /// </summary>
         protected void OnSendStreamCallback(IAsyncResult ar)
         {
@@ -331,26 +341,26 @@ namespace Cassandra
         protected virtual void OnClosing()
         {
             _isClosing = true;
-            if (Closing != null)
+            if (Disconnected != null)
             {
-                Closing();
+                Disconnected();
             }
 
             StopIdleTimer();
         }
 
         /// <summary>
-        /// Sends data asynchronously
+        ///     Sends data asynchronously
         /// </summary>
         public virtual void Write(Stream stream)
         {
             if (_isClosing)
             {
-                OnError(new SocketException((int)SocketError.Shutdown));
+                OnError(new SocketException((int) SocketError.Shutdown));
             }
             //This can result in OOM
             //A neat improvement would be to write this sync in small buffers when buffer.length > X
-            var buffer = Utils.ReadAllBytes(stream, 0);
+            byte[] buffer = Utils.ReadAllBytes(stream, 0);
             if (_sendSocketEvent != null)
             {
                 _sendSocketEvent.SetBuffer(buffer, 0, buffer.Length);
@@ -377,7 +387,7 @@ namespace Cassandra
         public void Dispose()
         {
             // Dispose connection idle timer if required
-            var idleTimer = Interlocked.Exchange(ref _idleTimer, null);
+            Timer idleTimer = Interlocked.Exchange(ref _idleTimer, null);
             if (idleTimer != null)
             {
                 idleTimer.Change(Timeout.Infinite, Timeout.Infinite);

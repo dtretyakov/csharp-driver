@@ -16,15 +16,13 @@ namespace Cassandra
     internal class Connection : IDisposable
     {
         private static readonly Logger _logger = new Logger(typeof(Connection));
-        private readonly TcpSocket _tcpSocket;
+        private readonly ITcpClient _tcpClient;
         private int _disposed;
         /// <summary>
         /// Determines that the connection canceled pending operations.
         /// It could be because its being closed or there was a socket error.
         /// </summary>
         private volatile bool _isCanceled;
-        private readonly object _cancelLock = new object();
-        private AutoResetEvent _pendingWaitHandle;
         /// <summary>
         /// Stores the available stream ids.
         /// </summary>
@@ -44,14 +42,10 @@ namespace Cassandra
         /// </summary>
         private readonly object _writeQueueLock = new object();
         private ConcurrentQueue<OperationState> _writeQueue;
-        private OperationState _receivingOperation;
-        /// <summary>
-        /// Small buffer (less than 8 bytes) that is used when the next received message is smaller than 8 bytes, 
-        /// and it is not possible to read the header.
-        /// </summary>
-        private byte[] _minimalBuffer;
+        
         private volatile string _keyspace;
         private readonly object _keyspaceLock = new object();
+
         /// <summary>
         /// The event that represents a event RESPONSE from a Cassandra node
         /// </summary>
@@ -61,21 +55,15 @@ namespace Cassandra
 
         public IPEndPoint Address
         {
-            get
-            {
-                return _tcpSocket.IPEndPoint;
-            }
+            get { return _tcpClient.EndPoint; }
         }
 
         /// <summary>
         /// Determines the amount of operations that are not finished.
         /// </summary>
         public int InFlight
-        { 
-            get
-            {
-                return _pendingOperations.Count;
-            }
+        {
+            get { return _pendingOperations.Count; }
         }
 
         /// <summary>
@@ -124,7 +112,7 @@ namespace Cassandra
                     _logger.Info("Connection to host " + Address + " switching to keyspace " + value);
                     _keyspace = value;
                     var request = new QueryRequest(ProtocolVersion, String.Format("USE \"{0}\"", value), false, QueryProtocolOptions.Default);
-                    TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
+                    TaskHelper.WaitToComplete(SendAsync(request), Configuration.SocketOptions.SendTimeout);
                 }
             }
         }
@@ -157,163 +145,8 @@ namespace Cassandra
         {
             ProtocolVersion = protocolVersion;
             Configuration = configuration;
-            _tcpSocket = new TcpSocket(endpoint, configuration.SocketOptions, configuration.ProtocolOptions.SslOptions);
-        }
 
-        /// <summary>
-        /// Starts the authentication flow
-        /// </summary>
-        /// <exception cref="AuthenticationException" />
-        private void Authenticate()
-        {
-            //Determine which authentication flow to use.
-            //Check if its using a C* 1.2 with authentication patched version (like DSE 3.1)
-            var isPatchedVersion = ProtocolVersion == 1 && !(Configuration.AuthProvider is NoneAuthProvider) && Configuration.AuthInfoProvider == null;
-            if (ProtocolVersion >= 2 || isPatchedVersion)
-            {
-                //Use protocol v2+ authentication flow
-
-                //NewAuthenticator will throw AuthenticationException when NoneAuthProvider
-                var authenticator = Configuration.AuthProvider.NewAuthenticator(Address);
-
-                var initialResponse = authenticator.InitialResponse() ?? new byte[0];
-                Authenticate(initialResponse, authenticator);
-            }
-            else
-            {
-                //Use protocol v1 authentication flow
-                if (Configuration.AuthInfoProvider == null)
-                {
-                    throw new AuthenticationException(
-                        String.Format("Host {0} requires authentication, but no credentials provided in Cluster configuration", Address),
-                        Address);
-                }
-                var credentialsProvider = Configuration.AuthInfoProvider;
-                var credentials = credentialsProvider.GetAuthInfos(Address);
-                var request = new CredentialsRequest(ProtocolVersion, credentials);
-                var response = TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
-                //If Cassandra replied with a auth response error
-                //The task already is faulted and the exception was already thrown.
-                if (response is ReadyResponse)
-                {
-                    return;
-                }
-                throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
-            }
-        }
-
-        /// <exception cref="AuthenticationException" />
-        private void Authenticate(byte[] token, IAuthenticator authenticator)
-        {
-            var request = new AuthResponseRequest(ProtocolVersion, token);
-            var response = TaskHelper.WaitToComplete(Send(request), Configuration.SocketOptions.SendTimeout);
-            if (response is AuthSuccessResponse)
-            {
-                //It is now authenticated
-                return;
-            }
-            if (response is AuthChallengeResponse)
-            {
-                token = authenticator.EvaluateChallenge((response as AuthChallengeResponse).Token);
-                if (token == null)
-                {
-                    // If we get a null response, then authentication has completed
-                    //return without sending a further response back to the server.
-                    return;
-                }
-                Authenticate(token, authenticator);
-                return;
-            }
-            throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
-        }
-
-        /// <summary>
-        /// It callbacks all operations already sent / or to be written, that do not have a response.
-        /// </summary>
-        internal void CancelPending(Exception ex, SocketError? socketError = null)
-        {
-            //Multiple IO worker threads may been notifying that the socket is closing/in error
-            lock (_cancelLock)
-            {
-                _isCanceled = true;
-                if (socketError != null)
-                {
-                    _logger.Verbose("Socket error " + socketError.Value);   
-                }
-                _logger.Info("Canceling pending operations " + _pendingOperations.Count + " and write queue " + _writeQueue.Count);
-                if (_pendingOperations.Count == 0 && _writeQueue.Count == 0)
-                {
-                    return;
-                }
-                if (ex == null)
-                {
-                    if (socketError != null)
-                    {
-                        ex = new SocketException((int)socketError.Value);
-                    }
-                    else
-                    {
-                        //It is closing
-                        ex = new SocketException((int)SocketError.NotConnected);
-                    }
-                }
-                if (_writeQueue.Count > 0)
-                {
-                    //Callback all the items in the write queue
-                    OperationState state;
-                    while (_writeQueue.TryDequeue(out state))
-                    {
-                        state.InvokeCallback(ex);
-                    }
-                }
-                if (_pendingOperations.Count > 0)
-                {
-                    //Callback for every pending operation
-                    foreach (var item in _pendingOperations)
-                    {
-                        item.Value.InvokeCallback(ex);
-                    }
-                    _pendingOperations.Clear();
-                }
-                if (_pendingWaitHandle != null)
-                {
-                    _pendingWaitHandle.Set();
-                }
-            }
-        }
-
-        public virtual void Dispose()
-        {
-            if (Interlocked.Increment(ref _disposed) != 1)
-            {
-                //Only dispose once
-                return;
-            }
-            _tcpSocket.Dispose();
-        }
-
-        private void EventHandler(Exception ex, AbstractResponse response)
-        {
-            if (!(response is EventResponse))
-            {
-                _logger.Error("Unexpected response type for event: " + response.GetType().Name);
-                return;
-            }
-            if (CassandraEventResponse != null)
-            {
-                CassandraEventResponse(this, (response as EventResponse).CassandraEventArgs);
-            }
-        }
-
-        /// <summary>
-        /// Initializes the connection. Thread safe.
-        /// </summary>
-        /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>
-        /// <exception cref="AuthenticationException" />
-        /// <exception cref="UnsupportedProtocolVersionException"></exception>
-        public virtual void Init()
-        {
-            _freeOperations = new ConcurrentStack<short>(Enumerable.Range(0, MaxConcurrentRequests).Select(s => (short)s).Reverse());
+            _freeOperations = new ConcurrentStack<short>(Enumerable.Range(0, MaxConcurrentRequests).Select(s => (short) s).Reverse());
             _pendingOperations = new ConcurrentDictionary<short, OperationState>();
             _writeQueue = new ConcurrentQueue<OperationState>();
 
@@ -330,19 +163,20 @@ namespace Cassandra
                 Compressor = new SnappyCompressor();
             }
 
-            //MAYBE: If really necessary, we can Wait on the BeginConnect result.
             //Init TcpSocket
-            _tcpSocket.Init();
-            _tcpSocket.Error += CancelPending;
-            _tcpSocket.Closing += () => CancelPending(null);
-            _tcpSocket.Read += ReadHandler;
-            _tcpSocket.WriteCompleted += WriteCompletedHandler;
-            _tcpSocket.Connect();
+            _tcpClient = configuration.ProtocolOptions.SslOptions != null
+                ? new SslStreamTcpClient(endpoint, configuration.SocketOptions, configuration.ProtocolOptions.SslOptions)
+                : new StreamTcpClient(endpoint, configuration.SocketOptions);
+        }
 
-            var startupTask = Startup();
+        public async Task ConnectAsync()
+        {
+            await _tcpClient.ConnectAsync();
+
+            AbstractResponse response;
             try
             {
-                TaskHelper.WaitToComplete(startupTask, _tcpSocket.Options.SendTimeout);
+                response = await StartupAsync();
             }
             catch (ProtocolErrorException ex)
             {
@@ -354,119 +188,238 @@ namespace Cassandra
                 }
                 throw;
             }
-            if (startupTask.Result is AuthenticateResponse)
+
+            if (response is AuthenticateResponse)
             {
-                Authenticate();
+                await AuthenticateAsync();
             }
-            else if (!(startupTask.Result is ReadyResponse))
+            else if (!(response is ReadyResponse))
             {
-                throw new DriverInternalError("Expected READY or AUTHENTICATE, obtained " + startupTask.Result.GetType().Name);
+                throw new DriverInternalError("Expected READY or AUTHENTICATE, obtained " + response.GetType().Name);
             }
         }
 
-        private void ReadHandler(byte[] buffer, int bytesReceived)
+        /// <summary>
+        /// Starts the authentication flow
+        /// </summary>
+        /// <exception cref="AuthenticationException" />
+        private async Task AuthenticateAsync()
         {
-            if (_isCanceled)
+            //Determine which authentication flow to use.
+            //Check if its using a C* 1.2 with authentication patched version (like DSE 3.1)
+            var isPatchedVersion = ProtocolVersion == 1 && !(Configuration.AuthProvider is NoneAuthProvider) && Configuration.AuthInfoProvider == null;
+            if (ProtocolVersion >= 2 || isPatchedVersion)
             {
-                //All pending operations have been canceled, there is no point in reading from the wire.
+                //Use protocol v2+ authentication flow
+
+                //NewAuthenticator will throw AuthenticationException when NoneAuthProvider
+                var authenticator = Configuration.AuthProvider.NewAuthenticator(Address);
+
+                var initialResponse = authenticator.InitialResponse() ?? new byte[0];
+                await AuthenticateAsync(initialResponse, authenticator);
+            }
+            else
+            {
+                //Use protocol v1 authentication flow
+                if (Configuration.AuthInfoProvider == null)
+                {
+                    throw new AuthenticationException(
+                        String.Format("Host {0} requires authentication, but no credentials provided in Cluster configuration", Address),
+                        Address);
+                }
+                var credentialsProvider = Configuration.AuthInfoProvider;
+                var credentials = credentialsProvider.GetAuthInfos(Address);
+                var request = new CredentialsRequest(ProtocolVersion, credentials);
+                var response = await SendAsync(request);
+                //If Cassandra replied with a auth response error
+                //The task already is faulted and the exception was already thrown.
+                if (response is ReadyResponse)
+                {
+                    return;
+                }
+
+                throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
+            }
+        }
+
+        /// <exception cref="AuthenticationException" />
+        private async Task AuthenticateAsync(byte[] token, IAuthenticator authenticator)
+        {
+            var request = new AuthResponseRequest(ProtocolVersion, token);
+            var response = await SendAsync(request);
+            if (response is AuthSuccessResponse)
+            {
+                //It is now authenticated
                 return;
             }
-            //Parse the data received
-            var streamIdAvailable = ReadParse(buffer, 0, bytesReceived);
-            if (streamIdAvailable)
+
+            if (response is AuthChallengeResponse)
             {
-                if (_pendingWaitHandle != null && _pendingOperations.Count == 0 && _writeQueue.Count == 0)
+                token = authenticator.EvaluateChallenge((response as AuthChallengeResponse).Token);
+                if (token == null)
                 {
-                    _pendingWaitHandle.Set();
+                    // If we get a null response, then authentication has completed
+                    //return without sending a further response back to the server.
+                    return;
                 }
-                //Process a next item in the queue if possible.
-                //Maybe there are there items in the write queue that were waiting on a fresh streamId
-                SendQueueNext();
+
+                await AuthenticateAsync(token, authenticator);
+                return;
             }
+            throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
+        }
+
+        /// <summary>
+        /// It callbacks all operations already sent / or to be written, that do not have a response.
+        /// </summary>
+        internal void CancelPending(Exception ex)
+        {
+            _isCanceled = true;
+
+            var pendingOperations = Interlocked.Exchange(ref _pendingOperations, new ConcurrentDictionary<short, OperationState>());
+            var writeQueue = Interlocked.Exchange(ref _writeQueue, new ConcurrentQueue<OperationState>());
+
+            _logger.Info("Canceling pending operations " + pendingOperations.Count + " and write queue " + writeQueue.Count);
+
+            foreach (var operation in pendingOperations)
+            {
+                operation.Value.Response.SetException(ex);
+            }
+
+            foreach (var write in writeQueue)
+            {
+                write.Response.SetException(ex);
+            }
+        }
+
+        public virtual void Dispose()
+        {
+            if (Interlocked.Increment(ref _disposed) != 1)
+            {
+                //Only dispose once
+                return;
+            }
+            _tcpClient.Dispose();
         }
 
         /// <summary>
         /// Parses the bytes received into a frame. Uses the internal operation state to do the callbacks.
         /// Returns true if a full operation (streamId) has been processed and there is one available.
         /// </summary>
-        /// <param name="buffer">Byte buffer to read</param>
-        /// <param name="offset">Offset within the buffer</param>
-        /// <param name="count">Length of bytes to be read from the buffer</param>
-        /// <returns>True if a full operation (streamId) has been processed.</returns>
-        protected virtual bool ReadParse(byte[] buffer, int offset, int count)
+        protected async void ReadParse()
         {
-            OperationState state = _receivingOperation;
-            if (state == null)
-            {
-                if (_minimalBuffer != null)
-                {
-                    buffer = Utils.JoinBuffers(_minimalBuffer, 0, _minimalBuffer.Length, buffer, offset, count);
-                    offset = 0;
-                    count = buffer.Length;
-                }
-                var headerSize = FrameHeader.GetSize(ProtocolVersion);
-                if (count < headerSize)
-                {
-                    //There is not enough data to read the header
-                    _minimalBuffer = Utils.SliceBuffer(buffer, offset, count);
-                    return false;
-                }
-                _minimalBuffer = null;
-                var header = FrameHeader.ParseResponseHeader(ProtocolVersion, buffer, offset);
-                if (!header.IsValidResponse())
-                {
-                    _logger.Error("Not a response header");
-                }
-                offset += headerSize;
-                count -= headerSize;
-                if (header.Opcode != EventResponse.OpCode)
-                {
-                    //Its a response to a previous request
-                    state = _pendingOperations[header.StreamId];
-                }
-                else
-                {
-                    //Its an event
-                    state = new OperationState();
-                    state.Callback = EventHandler;
-                }
-                state.Header = header;
-                _receivingOperation = state;
-            }
-            var countAdded = state.AppendBody(buffer, offset, count);
+            OperationState state = null;
+            byte[] minimalBuffer = null;
+            var receiveBuffer = new byte[_tcpClient.ReceiveBufferSize];
 
-            if (state.IsBodyComplete)
+            do
             {
-                _logger.Verbose("Read #" + state.Header.StreamId + " for Opcode " + state.Header.Opcode);
-                //Stop reference it as the current receiving operation
-                _receivingOperation = null;
-                if (state.Header.Opcode != EventResponse.OpCode)
-                {
-                    //Remove from pending
-                    _pendingOperations.TryRemove(state.Header.StreamId, out state);
-                    //Release the streamId
-                    _freeOperations.Push(state.Header.StreamId);
-                }
+                int bytesRead, offset, count;
                 try
                 {
-                    var response = ReadParseResponse(state.Header, state.BodyStream);
-                    state.InvokeCallback(null, response);
+                    bytesRead = await _tcpClient.ReadAsync(receiveBuffer, 0, receiveBuffer.Length);
                 }
-                catch (Exception ex)
+                catch (Exception e)
                 {
-                    state.InvokeCallback(ex);
+                    CancelPending(e);
+                    return;
                 }
 
-                if (countAdded < count)
+                if (bytesRead == 0)
                 {
-                    //There is more data, from the next frame
-                    ReadParse(buffer, offset + countAdded, count - countAdded);
+                    CancelPending(new SocketException((int)SocketError.Disconnecting));
                 }
-                return true;
+
+                if (state == null)
+                {
+                    if (minimalBuffer != null)
+                    {
+                        receiveBuffer = Utils.JoinBuffers(minimalBuffer, 0, minimalBuffer.Length, buffer, offset, count);
+                        offset = 0;
+                        count = buffer.Length;
+                    }
+                    var headerSize = FrameHeader.GetSize(ProtocolVersion);
+                    if (count < headerSize)
+                    {
+                        //There is not enough data to read the header
+                        minimalBuffer = Utils.SliceBuffer(buffer, offset, count);
+                        return;
+                    }
+                    minimalBuffer = null;
+                    var header = FrameHeader.ParseResponseHeader(ProtocolVersion, buffer, offset);
+                    if (!header.IsValidResponse())
+                    {
+                        _logger.Error("Not a response header");
+                    }
+                    offset += headerSize;
+                    count -= headerSize;
+                    if (header.Opcode != EventResponse.OpCode)
+                    {
+                        //Its a response to a previous request
+                        state = _pendingOperations[header.StreamId];
+                    }
+                    else
+                    {
+                        //Its an event
+                        state = new OperationState();
+                        state.Callback = EventHandler;
+                    }
+                    state.Header = header;
+                    _receivingOperation = state;
+                }
+
+                var countAdded = state.AppendBody(buffer, offset, count);
+
+                if (state.IsBodyComplete)
+                {
+                    _logger.Verbose("Read #" + state.Header.StreamId + " for Opcode " + state.Header.Opcode);
+                    //Stop reference it as the current receiving operation
+                    _receivingOperation = null;
+                    AbstractResponse response;
+
+                    try
+                    {
+                        response = ReadParseResponse(state.Header, state.BodyStream);
+                        state.InvokeCallback(null, response);
+                    }
+                    catch (Exception ex)
+                    {
+                        state.Response.SetException(ex);
+                    }
+
+                    if (state.Header.Opcode != EventResponse.OpCode)
+                    {
+                        //Remove from pending
+                        _pendingOperations.TryRemove(state.Header.StreamId, out state);
+                        //Release the streamId
+                        _freeOperations.Push(state.Header.StreamId);
+                    }
+                    else
+                    {
+                        ProcessEventResponse(response);
+                    }
+
+
+                    if (countAdded < count)
+                    {
+                        //There is more data, from the next frame
+                        ReadParse(buffer, offset + countAdded, count - countAdded);
+                    }
+                }
+            } while (!_isCanceled);
+        }
+
+        private void ProcessEventResponse(AbstractResponse response)
+        {
+            if (!(response is EventResponse))
+            {
+                _logger.Error("Unexpected response type for event: " + response.GetType().Name);
+                return;
             }
-            //There isn't enough data to read the whole frame.
-            //It is already buffered, carry on.
-            return false;
+            if (CassandraEventResponse != null)
+            {
+                CassandraEventResponse(this, (response as EventResponse).CassandraEventArgs);
+            }
         }
 
         private AbstractResponse ReadParseResponse(FrameHeader header, Stream body)
@@ -485,7 +438,7 @@ namespace Cassandra
         /// <summary>
         /// Sends a protocol STARTUP message
         /// </summary>
-        private Task<AbstractResponse> Startup()
+        private Task<AbstractResponse> StartupAsync()
         {
             var startupOptions = new Dictionary<string, string>();
             startupOptions.Add("CQL_VERSION", "3.0.0");
@@ -506,7 +459,7 @@ namespace Cassandra
         /// <summary>
         /// Sends a new request if possible. If it is not possible it queues it up.
         /// </summary>
-        public Task<AbstractResponse> Send(IRequest request)
+        public Task<AbstractResponse> SendAsync(IRequest request)
         {
             var tcs = new TaskCompletionSource<AbstractResponse>();
             Send(request, tcs.TrySet);
@@ -534,7 +487,7 @@ namespace Cassandra
         /// <summary>
         /// Try to write the item provided. Thread safe.
         /// </summary>
-        private void SendQueueProcess(OperationState state)
+        private async Task SendQueueProcess(OperationState state)
         {
             if (!_canWriteNext)
             {
@@ -575,7 +528,7 @@ namespace Cassandra
                 //We will not use the request, stop reference it.
                 state.Request = null;
                 //Start sending it
-                _tcpSocket.Write(frameStream);
+                await _tcpClient.WriteAsync(frameStream);
             }
             catch (Exception ex)
             {

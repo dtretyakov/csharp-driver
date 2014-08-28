@@ -48,7 +48,7 @@ namespace Cassandra.IntegrationTests.Core
                 connection.Init();
                 //Start a query
                 var request = new QueryRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces", false, QueryProtocolOptions.Default);
-                var task = connection.Send(request);
+                var task = connection.SendAsync(request);
                 task.Wait();
                 Assert.AreEqual(TaskStatus.RanToCompletion, task.Status);
                 //Result from Cassandra
@@ -67,7 +67,7 @@ namespace Cassandra.IntegrationTests.Core
             {
                 connection.Init();
                 var request = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces");
-                var task = connection.Send(request);
+                var task = connection.SendAsync(request);
                 task.Wait();
                 Assert.AreEqual(TaskStatus.RanToCompletion, task.Status);
                 var output = ValidateResult<OutputPrepared>(task.Result);
@@ -81,7 +81,7 @@ namespace Cassandra.IntegrationTests.Core
             {
                 connection.Init();
                 var request = new PrepareRequest(connection.ProtocolVersion, "SELECT WILL FAIL");
-                var task = connection.Send(request);
+                var task = connection.SendAsync(request);
                 task.ContinueWith(t =>
                 {
                     Assert.AreEqual(TaskStatus.Faulted, t.Status);
@@ -99,12 +99,12 @@ namespace Cassandra.IntegrationTests.Core
 
                 //Prepare a query
                 var prepareRequest = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces");
-                var task = connection.Send(prepareRequest);
+                var task = connection.SendAsync(prepareRequest);
                 var prepareOutput = ValidateResult<OutputPrepared>(task.Result);
                 
                 //Execute the prepared query
                 var executeRequest = new ExecuteRequest(connection.ProtocolVersion, prepareOutput.QueryId, null, false, QueryProtocolOptions.Default);
-                task = connection.Send(executeRequest);
+                task = connection.SendAsync(executeRequest);
                 var output = ValidateResult<OutputRows>(task.Result);
                 var rs = output.RowSet;
                 var rows = rs.ToList();
@@ -121,13 +121,13 @@ namespace Cassandra.IntegrationTests.Core
                 connection.Init();
 
                 var prepareRequest = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_columnfamilies WHERE keyspace_name = ?");
-                var task = connection.Send(prepareRequest);
+                var task = connection.SendAsync(prepareRequest);
                 var prepareOutput = ValidateResult<OutputPrepared>(task.Result);
 
                 var options = new QueryProtocolOptions(ConsistencyLevel.One, new[] { "system" }, false, 100, null, ConsistencyLevel.Any);
 
                 var executeRequest = new ExecuteRequest(connection.ProtocolVersion, prepareOutput.QueryId, null, false, options);
-                task = connection.Send(executeRequest);
+                task = connection.SendAsync(executeRequest);
                 var output = ValidateResult<OutputRows>(task.Result);
 
                 var rows = output.RowSet.ToList();
@@ -264,7 +264,7 @@ namespace Cassandra.IntegrationTests.Core
             {
                 connection.Init();
                 var eventTypes = CassandraEventType.TopologyChange | CassandraEventType.StatusChange | CassandraEventType.SchemaChange;
-                var task = connection.Send(new RegisterForEventRequest(connection.ProtocolVersion, eventTypes));
+                var task = connection.SendAsync(new RegisterForEventRequest(connection.ProtocolVersion, eventTypes));
                 TaskHelper.WaitToComplete(task, 1000);
                 Assert.IsInstanceOf<ReadyResponse>(task.Result);
                 connection.CassandraEventResponse += (o, e) =>
@@ -613,7 +613,7 @@ namespace Cassandra.IntegrationTests.Core
                 options = QueryProtocolOptions.Default;
             }
             var request = new QueryRequest(connection.ProtocolVersion, query, false, options);
-            return connection.Send(request);
+            return connection.SendAsync(request);
         }
 
         private static T ValidateResult<T>(AbstractResponse response)

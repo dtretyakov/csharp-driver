@@ -13,6 +13,8 @@
     <FileAlignment>512</FileAlignment>
     <SolutionDir Condition="$(SolutionDir) == '' Or $(SolutionDir) == '*Undefined*'">..\</SolutionDir>
     <RestorePackages>true</RestorePackages>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -28,6 +30,7 @@
     </NoWarn>
     <DocumentationFile>
     </DocumentationFile>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -40,6 +43,7 @@
     <DocumentationFile>bin\Release\Cassandra.xml</DocumentationFile>
     <NoWarn>1591</NoWarn>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup>
     <SignAssembly>false</SignAssembly>
@@ -68,11 +72,14 @@
     <Compile Include="..\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>
     </Compile>
+    <Compile Include="SslStreamTcpClient.cs" />
+    <Compile Include="StreamTcpClient.cs" />
     <Compile Include="Exceptions\RequestInvalidException.cs" />
     <Compile Include="HostConnectionPool.cs" />
     <Compile Include="DefaultAddressTranslator.cs" />
     <Compile Include="IAddressTranslator.cs" />
     <Compile Include="ICqlRequest.cs" />
+    <Compile Include="ITcpClient.cs" />
     <Compile Include="ListBackedStream.cs" />
     <Compile Include="AtomicValue.cs" />
     <Compile Include="BigIntegerTypeAdapter.cs" />
@@ -282,7 +289,7 @@
     <Compile Include="TableMetadata.cs" />
     <Compile Include="TableOptions.cs" />
     <Compile Include="TaskHelper.cs" />
-    <Compile Include="TcpSocket.cs" />
+    <Compile Include="EventTcpClient.cs" />
     <Compile Include="TokenFactory.cs" />
     <Compile Include="TokenMap.cs" />
     <Compile Include="TopologyChangeEventArgs.cs" />

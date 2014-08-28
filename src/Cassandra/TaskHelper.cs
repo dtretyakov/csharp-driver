@@ -122,6 +122,39 @@ namespace Cassandra
             }
             return task.Result;
         }
+        
+        /// <summary>
+        /// Waits the task to transition to RanToComplete.
+        /// It throws the inner exception of the AggregateException in case there is a single exception.
+        /// It throws the Aggregate exception when there is more than 1 inner exception.
+        /// It throws a TimeoutException when the task didn't complete in the expected time.
+        /// </summary>
+        /// <param name="task">the task to wait upon</param>
+        /// <param name="timeout">timeout in milliseconds</param>
+        /// <exception cref="TimeoutException" />
+        /// <exception cref="AggregateException" />
+        public static void WaitToComplete(Task task, int timeout = System.Threading.Timeout.Infinite)
+        {
+            //It should wait and throw any exception
+            try
+            {
+                task.Wait(timeout);
+            }
+            catch (AggregateException ex)
+            {
+                ex = ex.Flatten();
+                //throw the actual exception when there was a single exception
+                if (ex.InnerExceptions.Count == 1)
+                {
+                    throw PreserveStackTrace(ex.InnerExceptions[0]);
+                }
+                throw;
+            }
+            if (task.Status != TaskStatus.RanToCompletion)
+            {
+                throw new TimeoutException("The task didn't complete before timeout.");
+            }
+        }
 
         /// <summary>
         /// Waits the task to transition to RanToComplete.
@@ -136,6 +169,21 @@ namespace Cassandra
         public static T WaitToComplete<T>(Task<T> task, TimeSpan timeout)
         {
             return WaitToComplete(task, (int)timeout.TotalMilliseconds);
+        }
+        
+        /// <summary>
+        /// Waits the task to transition to RanToComplete.
+        /// It throws the inner exception of the AggregateException in case there is a single exception.
+        /// It throws the Aggregate exception when there is more than 1 inner exception.
+        /// It throws a TimeoutException when the task didn't complete in the expected time.
+        /// </summary>
+        /// <param name="task">the task to wait upon</param>
+        /// <param name="timeout">timeout</param>
+        /// <exception cref="TimeoutException" />
+        /// <exception cref="AggregateException" />
+        public static void WaitToComplete(Task task, TimeSpan timeout)
+        {
+            WaitToComplete(task, (int)timeout.TotalMilliseconds);
         }
 
         /// <summary>
