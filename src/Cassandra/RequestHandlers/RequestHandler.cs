@@ -36,8 +36,8 @@ namespace Cassandra.RequestHandlers
         public Statement Statement { get; set; }
         private IEnumerator<Host> _hostsIter = null;
         public IAsyncResult LongActionAc;
-        public readonly Dictionary<IPAddress, List<Exception>> InnerExceptions = new Dictionary<IPAddress, List<Exception>>();
-        public readonly List<IPAddress> TriedHosts = new List<IPAddress>();
+        public readonly Dictionary<IPEndPoint, List<Exception>> InnerExceptions = new Dictionary<IPEndPoint, List<Exception>>();
+        public readonly List<IPEndPoint> TriedHosts = new List<IPEndPoint>();
         public int QueryRetries = 0;
 
         virtual public void Connect(Session owner, bool moveNext, out int streamId)
@@ -47,7 +47,7 @@ namespace Cassandra.RequestHandlers
                 _hostsIter = owner.Policies.LoadBalancingPolicy.NewQueryPlan(Statement).GetEnumerator();
                 if (!_hostsIter.MoveNext())
                 {
-                    var ex = new NoHostAvailableException(new Dictionary<IPAddress, List<Exception>>());
+                    var ex = new NoHostAvailableException(new Dictionary<IPEndPoint, List<Exception>>());
                     _logger.Error(ex);
                     throw ex;
                 }

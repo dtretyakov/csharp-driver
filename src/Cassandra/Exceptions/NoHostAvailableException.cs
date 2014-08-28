@@ -33,18 +33,18 @@ namespace Cassandra
         /// <summary>
         ///  Gets the hosts tried along with descriptions of the error encountered while trying them. 
         /// </summary>
-        public Dictionary<IPAddress, List<Exception>> Errors { get; private set; }
+        public Dictionary<IPEndPoint, List<Exception>> Errors { get; private set; }
 
-        public NoHostAvailableException(Dictionary<IPAddress, List<Exception>> errors)
+        public NoHostAvailableException(Dictionary<IPEndPoint, List<Exception>> errors)
             : base(MakeMessage(errors))
         {
             Errors = errors;
         }
 
-        private static String MakeMessage(Dictionary<IPAddress, List<Exception>> errors)
+        private static String MakeMessage(Dictionary<IPEndPoint, List<Exception>> errors)
         {
             var addrs = new List<string>();
-            foreach (IPAddress err in errors.Keys)
+            foreach (IPEndPoint err in errors.Keys)
                 addrs.Add(err.ToString());
 
             return string.Format("None of the hosts tried for query are available (tried: {0})", string.Join(",", addrs.ToArray()));

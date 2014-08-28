@@ -47,8 +47,9 @@
     </AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="LZ4, Version=1.0.3.93, Culture=neutral, PublicKeyToken=fd2bda0a70c5a705, processorArchitecture=MSIL">
-      <HintPath>..\packages\lz4net.1.0.3.93\lib\net40-client\LZ4.dll</HintPath>
+    <Reference Include="LZ4, Version=1.0.5.93, Culture=neutral, PublicKeyToken=fd2bda0a70c5a705, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\packages\lz4net.1.0.5.93\lib\net40-client\LZ4.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
@@ -81,6 +82,7 @@
     <Compile Include="BatchStatement.cs" />
     <Compile Include="CqlQueryTools.cs" />
     <Compile Include="DecimalTypeAdapter.cs" />
+    <Compile Include="DefaultAddressTranslator.cs" />
     <Compile Include="Diagnostics.cs" />
     <Compile Include="DynamicCompositeTypeAdapter.cs" />
     <Compile Include="Exceptions\InvalidTypeException.cs" />
@@ -92,6 +94,7 @@
     <Compile Include="Hosts.cs" />
     <Compile Include="HostsEventArgs.cs" />
     <Compile Include="HostsEventHandler.cs" />
+    <Compile Include="IAddressTranslator.cs" />
     <Compile Include="IAuthenticator.cs" />
     <Compile Include="IAuthInfoProvider.cs" />
     <Compile Include="IAuthProvider.cs" />

@@ -49,7 +49,7 @@ namespace Cassandra
         private readonly Action<ErrorActionParam> _protocolErrorHandlerAction;
         private readonly int _queryAbortTimeout = Timeout.Infinite;
         private readonly AutoResetEvent _readerSocketStreamBusy = new AutoResetEvent(true);
-        private readonly IPAddress _serverAddress;
+        private readonly IPEndPoint _serverAddress;
         private readonly Socket _socket;
         private readonly BoolSwitch _socketExceptionOccured = new BoolSwitch();
 
@@ -77,7 +77,7 @@ namespace Cassandra
             get { return !_alreadyDisposed.IsTaken() && !_socketExceptionOccured.IsTaken(); }
         }
 
-        internal CassandraConnection(ISession owner, IPAddress serverAddress, ProtocolOptions protocolOptions,
+        internal CassandraConnection(ISession owner, IPEndPoint serverAddress, ProtocolOptions protocolOptions,
                                      SocketOptions socketOptions, ClientOptions clientOptions,
                                      IAuthProvider authProvider, IAuthInfoProvider authInfoProvider, int protocolVersion)
         {
@@ -165,7 +165,7 @@ namespace Cassandra
                 newSock.NoDelay = _socketOptions.TcpNoDelay.Value;
 
 
-            var connectionResult = newSock.BeginConnect(_serverAddress, _port, null, null);
+            var connectionResult = newSock.BeginConnect(_serverAddress, null, null);
             connectionResult.AsyncWaitHandle.WaitOne(_socketOptions.ConnectTimeoutMillis);
 
             if (!newSock.Connected)
@@ -185,7 +185,7 @@ namespace Cassandra
                 string targetHost;
                 try
                 {
-                    targetHost = Dns.GetHostEntry(_serverAddress).HostName;
+                    targetHost = Dns.GetHostEntry(_serverAddress.Address).HostName;
                 }
                 catch (SocketException ex)
                 {
@@ -597,7 +597,7 @@ namespace Cassandra
             }
         }
 
-        internal IPAddress GetHostAdress()
+        internal IPEndPoint GetHostAdress()
         {
             return _serverAddress;
         }

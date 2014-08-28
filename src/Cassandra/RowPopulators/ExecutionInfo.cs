@@ -17,14 +17,14 @@ namespace Cassandra
     {
         private ConsistencyLevel _achievedConsistency = ConsistencyLevel.Any;
         private QueryTrace _queryTrace;
-        private List<IPAddress> _tiedHosts;
+        private List<IPEndPoint> _tiedHosts;
 
-        public List<IPAddress> TriedHosts
+        public List<IPEndPoint> TriedHosts
         {
             get { return _tiedHosts; }
         }
 
-        public IPAddress QueriedHost
+        public IPEndPoint QueriedHost
         {
             get { return _tiedHosts.Count > 0 ? _tiedHosts[_tiedHosts.Count - 1] : null; }
         }
@@ -39,7 +39,7 @@ namespace Cassandra
             get { return _achievedConsistency; }
         }
 
-        internal void SetTriedHosts(List<IPAddress> triedHosts)
+        internal void SetTriedHosts(List<IPEndPoint> triedHosts)
         {
             _tiedHosts = triedHosts;
         }

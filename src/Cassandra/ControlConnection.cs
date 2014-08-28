@@ -37,6 +37,7 @@ namespace Cassandra
         private const String SelectColumns = "SELECT * FROM system.schema_columns";
         private readonly AtomicValue<CassandraConnection> _activeConnection = new AtomicValue<CassandraConnection>(null);
         private readonly Cluster _cluster;
+        private readonly IAddressTranslator _addressTranslator;
 
         private readonly AtomicValue<ConcurrentDictionary<string, AtomicValue<KeyspaceMetadata>>> _keyspaces =
             new AtomicValue<ConcurrentDictionary<string, AtomicValue<KeyspaceMetadata>>>(null);
@@ -64,14 +65,16 @@ namespace Cassandra
                                    ClientOptions clientOptions,
                                    IAuthProvider authProvider,
                                    IAuthInfoProvider authInfoProvider,
-                                   int binaryProtocolVersion)
+                                   int binaryProtocolVersion,
+                                   IAddressTranslator addressTranslator)
         {
             _cluster = cluster;
+            _addressTranslator = addressTranslator;
             _reconnectionSchedule = _reconnectionPolicy.NewSchedule();
             _reconnectionTimer = new Timer(ReconnectionClb, null, Timeout.Infinite, Timeout.Infinite);
 
             _session = new Session(cluster, policies, protocolOptions, poolingOptions, socketOptions,
-                                   clientOptions, authProvider, authInfoProvider, "", binaryProtocolVersion);
+                clientOptions, authProvider, authInfoProvider, "", binaryProtocolVersion);
         }
 
         public void Dispose()
@@ -90,7 +93,7 @@ namespace Cassandra
 
             if (e.What == HostsEventArgs.Kind.Down)
             {
-                if (e.IPAddress.Equals(_activeConnection.Value.GetHostAdress()))
+                if (e.Address.Equals(_activeConnection.Value.GetHostAdress()))
                     act.BeginInvoke(null, ar => { act.EndInvoke(ar); }, null);
             }
             else if (e.What == HostsEventArgs.Kind.Up)
@@ -125,14 +128,14 @@ namespace Cassandra
 
         private void SetupEventListener()
         {
-            var triedHosts = new List<IPAddress>();
-            var innerExceptions = new Dictionary<IPAddress, List<Exception>>();
+            var triedHosts = new List<IPEndPoint>();
+            var innerExceptions = new Dictionary<IPEndPoint, List<Exception>>();
 
             IEnumerator<Host> hostsIter = _session.Policies.LoadBalancingPolicy.NewQueryPlan(null).GetEnumerator();
 
             if (!hostsIter.MoveNext())
             {
-                var ex = new NoHostAvailableException(new Dictionary<IPAddress, List<Exception>>());
+                var ex = new NoHostAvailableException(new Dictionary<IPEndPoint, List<Exception>>());
                 _logger.Error(ex);
                 throw ex;
             }
@@ -334,10 +337,10 @@ namespace Cassandra
         {
             _logger.Info("Refreshing NodeList and TokenMap..");
             // Make sure we're up to date on nodes and tokens            
-            var tokenMap = new Dictionary<IPAddress, HashSet<string>>();
+            var tokenMap = new Dictionary<IPEndPoint, HashSet<string>>();
             string partitioner = null;
 
-            var foundHosts = new List<IPAddress>();
+            var foundHosts = new List<IPEndPoint>();
             var dcs = new List<string>();
             var racks = new List<string>();
             var allTokens = new List<HashSet<string>>();
@@ -366,7 +369,10 @@ namespace Cassandra
 
                     if (hstip != null)
                     {
-                        foundHosts.Add(hstip);
+                        var originalAddress = new IPEndPoint(hstip, ProtocolOptions.DefaultPort);
+                        var translatedAddress = TranslateAddress(originalAddress);
+
+                        foundHosts.Add(translatedAddress);
                         dcs.Add(row.GetValue<string>("data_center"));
                         racks.Add(row.GetValue<string>("rack"));
                         var col = row.GetValue<IEnumerable<string>>("tokens");
@@ -426,8 +432,8 @@ namespace Cassandra
             }
 
             // Removes all those that seems to have been removed (since we lost the control connection)
-            var foundHostsSet = new HashSet<IPAddress>(foundHosts);
-            foreach (IPAddress host in _cluster.Metadata.AllReplicas())
+            var foundHostsSet = new HashSet<IPEndPoint>(foundHosts);
+            foreach (IPEndPoint host in _cluster.Metadata.AllReplicas())
                 if (!host.Equals(_activeConnection.Value.GetHostAdress()) && !foundHostsSet.Contains(host))
                     _cluster.Metadata.RemoveHost(host);
 
@@ -435,6 +441,11 @@ namespace Cassandra
                 _cluster.Metadata.RebuildTokenMap(partitioner, tokenMap);
 
             _logger.Info("NodeList and TokenMap have been successfully refreshed!");
+        }
+
+        private IPEndPoint TranslateAddress(IPEndPoint originalAddress)
+        {
+            return _addressTranslator.Translate(originalAddress) ?? originalAddress;
         }
 
         private bool WaitForSchemaAgreement()
@@ -460,7 +471,10 @@ namespace Cassandra
                             if (!row.IsNull("peer"))
                                 rpc = row.GetValue<IPAddress>("peer");
 
-                        Host peer = _cluster.Metadata.GetHost(rpc);
+                        var originalAddress = new IPEndPoint(rpc, ProtocolOptions.DefaultPort);
+                        var translatedAddress = TranslateAddress(originalAddress);
+
+                        Host peer = _cluster.Metadata.GetHost(translatedAddress);
                         if (peer != null && peer.IsConsiderablyUp)
                             versions.Add(row.GetValue<Guid>("schema_version"));
                     }

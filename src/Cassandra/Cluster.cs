@@ -39,7 +39,7 @@ namespace Cassandra
         /// <returns>the newly created Cluster instance </returns>
         public static Cluster BuildFrom(IInitializer initializer)
         {
-            ICollection<IPAddress> contactPoints = initializer.ContactPoints;
+            ICollection<IPEndPoint> contactPoints = initializer.ContactPoints;
             if (contactPoints.Count == 0)
                 throw new ArgumentException("Cannot build a cluster without contact points");
 
@@ -59,7 +59,7 @@ namespace Cassandra
         private readonly int _binaryProtocolVersion;
         private readonly Configuration _configuration;
         private readonly ConcurrentDictionary<Guid, Session> _connectedSessions = new ConcurrentDictionary<Guid, Session>();
-        private readonly IEnumerable<IPAddress> _contactPoints;
+        private readonly IEnumerable<IPEndPoint> _contactPoints;
         private readonly Logger _logger = new Logger(typeof (Cluster));
         private readonly Metadata _metadata;
 
@@ -81,7 +81,7 @@ namespace Cassandra
             get { return _metadata; }
         }
 
-        private Cluster(IEnumerable<IPAddress> contactPoints, Configuration configuration)
+        private Cluster(IEnumerable<IPEndPoint> contactPoints, Configuration configuration)
         {
             _contactPoints = contactPoints;
             _configuration = configuration;
@@ -93,7 +93,7 @@ namespace Cassandra
                 new ExponentialReconnectionPolicy(2*1000, 5*60*1000),
                 Policies.DefaultRetryPolicy);
 
-            foreach (IPAddress ep in _contactPoints)
+            foreach (IPEndPoint ep in _contactPoints)
                 Metadata.AddHost(ep);
 
             PoolingOptions poolingOptions = new PoolingOptions()
@@ -112,7 +112,8 @@ namespace Cassandra
                                                               _configuration.ClientOptions.QueryAbortTimeout, null),
                                                           _configuration.AuthProvider,
                                                           _configuration.AuthInfoProvider,
-                                                          2 //lets start from protocol version 2
+                                                          2, //lets start from protocol version 2
+                                                          _configuration.AddressTranslator
                 );
 
             _metadata.SetupControllConnection(controlConnection);
@@ -175,13 +176,13 @@ namespace Cassandra
         }
 
         /// <inheritdoc />
-        public Host GetHost(IPAddress address)
+        public Host GetHost(IPEndPoint address)
         {
             return Metadata.GetHost(address);
         }
 
         /// <inheritdoc />
-        public ICollection<IPAddress> GetReplicas(byte[] partitionKey)
+        public ICollection<IPEndPoint> GetReplicas(byte[] partitionKey)
         {
             return Metadata.GetReplicas(partitionKey);
         }

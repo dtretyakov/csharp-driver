@@ -50,8 +50,8 @@ namespace Cassandra
 
         public Cluster Cluster { get { return _cluster; } }
 
-        readonly ConcurrentDictionary<IPAddress, ConcurrentDictionary<Guid, CassandraConnection>> _connectionPool = new ConcurrentDictionary<IPAddress, ConcurrentDictionary<Guid, CassandraConnection>>();
-        readonly ConcurrentDictionary<IPAddress, AtomicValue<int>> _allocatedConnections = new ConcurrentDictionary<IPAddress, AtomicValue<int>>();
+        readonly ConcurrentDictionary<IPEndPoint, ConcurrentDictionary<Guid, CassandraConnection>> _connectionPool = new ConcurrentDictionary<IPEndPoint, ConcurrentDictionary<Guid, CassandraConnection>>();
+        readonly ConcurrentDictionary<IPEndPoint, AtomicValue<int>> _allocatedConnections = new ConcurrentDictionary<IPEndPoint, AtomicValue<int>>();
 
         internal Session(Cluster cluster,
                          Policies policies,
@@ -94,13 +94,13 @@ namespace Cassandra
                 var ci = Policies.LoadBalancingPolicy.NewQueryPlan(null).GetEnumerator();
                 if (!ci.MoveNext())
                 {
-                    var ex = new NoHostAvailableException(new Dictionary<IPAddress, List<Exception>>());
+                    var ex = new NoHostAvailableException(new Dictionary<IPEndPoint, List<Exception>>());
                     _logger.Error(ex.Message);
                     throw ex;
                 }
 
-                var triedHosts = new List<IPAddress>();
-                var innerExceptions = new Dictionary<IPAddress, List<Exception>>();
+                var triedHosts = new List<IPEndPoint>();
+                var innerExceptions = new Dictionary<IPEndPoint, List<Exception>>();
                 int streamId;
                 var con = Connect( ci, triedHosts, innerExceptions, out streamId);
                 con.FreeStreamId(streamId);
@@ -109,7 +109,7 @@ namespace Cassandra
             _trashcanCleaner = new Timer(TranscanCleanup, null, Timeout.Infinite, Timeout.Infinite);
         }
 
-        readonly ConcurrentDictionary<IPAddress, ConcurrentDictionary<Guid, CassandraConnection>> _trashcan = new ConcurrentDictionary<IPAddress, ConcurrentDictionary<Guid, CassandraConnection>>();
+        readonly ConcurrentDictionary<IPEndPoint, ConcurrentDictionary<Guid, CassandraConnection>> _trashcan = new ConcurrentDictionary<IPEndPoint, ConcurrentDictionary<Guid, CassandraConnection>>();
 
         void TranscanCleanup(object state)
         {
@@ -151,7 +151,7 @@ namespace Cassandra
             _trashcanCleaner.Change(10000, Timeout.Infinite);
         }
 
-        CassandraConnection TrashcanRecycle(IPAddress addr)
+        CassandraConnection TrashcanRecycle(IPEndPoint addr)
         {
             if (!_trashcan.ContainsKey(addr))
                 return null;
@@ -170,7 +170,7 @@ namespace Cassandra
             return null;
         }
 
-        internal CassandraConnection Connect(IEnumerator<Host> hostsIter, List<IPAddress> triedHosts, Dictionary<IPAddress, List<Exception>> innerExceptions, out int streamId)
+        internal CassandraConnection Connect(IEnumerator<Host> hostsIter, List<IPEndPoint> triedHosts, Dictionary<IPEndPoint, List<Exception>> innerExceptions, out int streamId)
         {
             CheckDisposed();
 
@@ -276,7 +276,7 @@ namespace Cassandra
         }
 
 
-        internal void HostIsDown(IPAddress endpoint)
+        internal void HostIsDown(IPEndPoint endpoint)
         {
 			var metadata = _cluster.Metadata;
             if(metadata!=null)
@@ -291,7 +291,7 @@ namespace Cassandra
             var no = Interlocked.Decrement(ref val.RawValue);
         }
 
-        CassandraConnection AllocateConnection(IPAddress endPoint, HostDistance hostDistance, out Exception outExc)
+        CassandraConnection AllocateConnection(IPEndPoint endPoint, HostDistance hostDistance, out Exception outExc)
         {
             CassandraConnection nconn = null;
             outExc = null;
@@ -913,7 +913,7 @@ namespace Cassandra
             WaitForSchemaAgreement(rs.Info.QueriedHost);
         }
 
-        public bool WaitForSchemaAgreement(IPAddress forHost)
+        public bool WaitForSchemaAgreement(IPEndPoint forHost)
         {
             var start = DateTimeOffset.Now;
             long elapsed = 0;
@@ -928,8 +928,8 @@ namespace Cassandra
                     var localhost = _cluster.Metadata.GetHost(forHost);
                     var iterLiof = new List<Host>() { localhost }.GetEnumerator();
                     iterLiof.MoveNext();
-                    List<IPAddress> tr = new List<IPAddress>();
-                    Dictionary<IPAddress, List<Exception>> exx = new Dictionary<IPAddress, List<Exception>>();
+                    List<IPEndPoint> tr = new List<IPEndPoint>();
+                    Dictionary<IPEndPoint, List<Exception>> exx = new Dictionary<IPEndPoint, List<Exception>>();
 
                     connection = Connect(iterLiof, tr, exx, out streamId1);
                     while (true)
@@ -965,7 +965,7 @@ namespace Cassandra
                                         rpc = row.GetValue<IPAddress>("peer");
                                 }
 
-                                Host peer = _cluster.Metadata.GetHost(rpc);
+                                Host peer = _cluster.Metadata.GetHost(new IPEndPoint(rpc, ProtocolOptions.DefaultPort));
                                 if (peer != null && peer.IsConsiderablyUp)
                                     versions.Add(row.GetValue<Guid>("schema_version"));
                             }
@@ -1008,7 +1008,7 @@ namespace Cassandra
         {
             if (_connectionPool.Count > 0)
             {
-                var endpoints = new List<IPAddress>(_connectionPool.Keys);
+                var endpoints = new List<IPEndPoint>(_connectionPool.Keys);
                 var hostidx = StaticRandom.Instance.Next(endpoints.Count);
                 var endpoint = endpoints[hostidx];
                 ConcurrentDictionary<Guid, CassandraConnection> pool;

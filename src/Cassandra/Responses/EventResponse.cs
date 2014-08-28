@@ -33,7 +33,7 @@ namespace Cassandra
                 ce.What = BeBinaryReader.ReadString() == "NEW_NODE"
                               ? TopologyChangeEventArgs.Reason.NewNode
                               : TopologyChangeEventArgs.Reason.RemovedNode;
-                ce.Address = BeBinaryReader.ReadInet().Address;
+                ce.Address = BeBinaryReader.ReadInet();
                 CassandraEventArgs = ce;
                 return;
             }
@@ -43,7 +43,7 @@ namespace Cassandra
                 ce.What = BeBinaryReader.ReadString() == "UP"
                               ? StatusChangeEventArgs.Reason.Up
                               : StatusChangeEventArgs.Reason.Down;
-                ce.Address = BeBinaryReader.ReadInet().Address;
+                ce.Address = BeBinaryReader.ReadInet();
                 CassandraEventArgs = ce;
                 return;
             }
