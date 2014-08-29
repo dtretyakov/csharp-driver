@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Cassandra
@@ -39,7 +40,14 @@ namespace Cassandra
 
         public IRequest Request { get; set; }
 
-        public TaskCompletionSource<AbstractResponse> Response { get; set; }
+        public TaskCompletionSource<AbstractResponse> Response { get; private set; }
+
+        public CancellationTokenSource TokenSource { get; set; }
+
+        public OperationState()
+        {
+            Response = new TaskCompletionSource<AbstractResponse>();
+        }
 
         /// <summary>
         ///     Appends to the body stream
@@ -65,7 +73,10 @@ namespace Cassandra
             {
                 count = Header.BodyLength - (int) BodyStream.Position;
             }
-            BodyStream.Write(value, offset, count);
+            if (count > 0)
+            {
+                BodyStream.Write(value, offset, count);
+            }
             return count;
         }
     }

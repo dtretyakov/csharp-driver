@@ -13,8 +13,8 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 //
+
 using System;
-using System.IO;
 using System.Linq;
 
 namespace Cassandra
@@ -22,51 +22,46 @@ namespace Cassandra
     internal class FrameHeader
     {
         public const int MaxFrameSize = 256*1024*1024;
+
         /// <summary>
-        /// Protocol version byte (in case of responses 0x81, 0x82, ... in case of requests 0x01, 0x02)
+        ///     Protocol version byte (in case of responses 0x81, 0x82, ... in case of requests 0x01, 0x02)
         /// </summary>
         private byte _versionByte;
 
         /// <summary>
-        /// Returns the length of the frame body 
+        ///     Returns the length of the frame body
         /// </summary>
         public int BodyLength
         {
-            get
-            {
-                return TypeCodec.BytesToInt32(Len, 0);
-            }
+            get { return TypeCodec.BytesToInt32(Len, 0); }
         }
-        
-        public byte Flags { get; set; }
-        
-        public byte[] Len = new byte[4];
-        
-        public byte Opcode { get; set; }
-        
-        public short StreamId { get; set; }
+
+        public FrameFlags Flags { get; private set; }
+
+        public byte[] Len { get; internal set; }
+
+        public FrameOperation Operation { get; private set; }
+
+        public short StreamId { get; private set; }
 
         /// <summary>
-        /// Protocol version of the protocol (1, 2, 3)
+        ///     Protocol version of the protocol (1, 2, 3)
         /// </summary>
         public byte Version
         {
-            get
-            {
-                return (byte)(_versionByte & 0x07);
-            }
+            get { return (byte) (_versionByte & 0x07); }
         }
 
         /// <summary>
-        /// Determines if the response is valid by checking the version byte
+        ///     Determines if the response is valid by checking the version byte
         /// </summary>
         public bool IsValidResponse()
         {
-            return this._versionByte >> 7 == 1 && (_versionByte & 0x07) > 0;
+            return _versionByte >> 7 == 1 && (_versionByte & 0x07) > 0;
         }
 
         /// <summary>
-        /// Gets the size of the protocol header, depending on the version of the protocol
+        ///     Gets the size of the protocol header, depending on the version of the protocol
         /// </summary>
         /// <param name="version">Version of the protocol used</param>
         public static byte GetSize(byte version)
@@ -79,26 +74,26 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Parses the first 8 bytes and returns a FrameHeader
+        ///     Parses the first 8 bytes and returns a FrameHeader
         /// </summary>
         public static FrameHeader ParseResponseHeader(byte version, byte[] buffer, int offset)
         {
-            var header = new FrameHeader()
+            var header = new FrameHeader
             {
                 _versionByte = buffer[offset++],
-                Flags = buffer[offset++]
+                Flags = (FrameFlags) buffer[offset++]
             };
             if (version < 3)
             {
                 //Stream id is a signed byte in v1 and v2 of the protocol
-                header.StreamId =  (sbyte)buffer[offset++];
+                header.StreamId = (sbyte) buffer[offset++];
             }
             else
             {
-                header.StreamId = BitConverter.ToInt16(new byte[] { buffer[offset + 1], buffer[offset] }, 0);
+                header.StreamId = BitConverter.ToInt16(new[] {buffer[offset + 1], buffer[offset]}, 0);
                 offset += 2;
             }
-            header.Opcode = buffer[offset++];
+            header.Operation = (FrameOperation) buffer[offset++];
             header.Len = buffer.Skip(offset).Take(4).ToArray();
             return header;
         }

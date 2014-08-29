@@ -165,12 +165,12 @@ namespace Cassandra
             return Task.FromResult(0);
         }
 
-        public Task<int> ReadAsync(byte[] buffer, int offset, int count)
+        public Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default(CancellationToken))
         {
             throw new NotImplementedException();
         }
 
-        public Task WriteAsync(Stream stream)
+        public Task WriteAsync(Stream stream, CancellationToken cancellationToken = default(CancellationToken))
         {
             throw new NotImplementedException();
         }

@@ -27,16 +27,17 @@ namespace Cassandra
         /// <summary>
         /// A factory to get the response handlers 
         /// </summary>
-        private static readonly Dictionary<byte, Func<ResponseFrame, AbstractResponse>> _responseHandlerFactory = new Dictionary<byte, Func<ResponseFrame, AbstractResponse>>
+        private static readonly Dictionary<FrameOperation, Func<ResponseFrame, AbstractResponse>> ResponseHandlerFactory =
+            new Dictionary<FrameOperation, Func<ResponseFrame, AbstractResponse>>
         {
-            {AuthenticateResponse.OpCode, AuthenticateResponse.Create},
-            {ErrorResponse.OpCode, ErrorResponse.Create},
-            {EventResponse.OpCode, EventResponse.Create},
-            {ReadyResponse.OpCode, ReadyResponse.Create},
-            {ResultResponse.OpCode, ResultResponse.Create},
-            {SupportedResponse.OpCode, SupportedResponse.Create},
-            {AuthSuccessResponse.OpCode, AuthSuccessResponse.Create},
-            {AuthChallengeResponse.OpCode, AuthChallengeResponse.Create}
+            {FrameOperation.Authenticate, AuthenticateResponse.Create},
+            {FrameOperation.Error, ErrorResponse.Create},
+            {FrameOperation.Event, EventResponse.Create},
+            {FrameOperation.Ready, ReadyResponse.Create},
+            {FrameOperation.Result, ResultResponse.Create},
+            {FrameOperation.Supported, SupportedResponse.Create},
+            {FrameOperation.AuthSuccess, AuthSuccessResponse.Create},
+            {FrameOperation.AuthChallenge, AuthChallengeResponse.Create}
         };
 
         /// <summary>
@@ -44,12 +45,12 @@ namespace Cassandra
         /// </summary>
         public static AbstractResponse Parse(ResponseFrame frame)
         {
-            byte opcode = frame.Header.Opcode;
-            if (!_responseHandlerFactory.ContainsKey(opcode))
+            Func<ResponseFrame, AbstractResponse> handler;
+            if (!ResponseHandlerFactory.TryGetValue(frame.Header.Operation, out handler))
             {
-                throw new DriverInternalError("Unknown Response Frame type " + opcode);
+                throw new DriverInternalError("Unknown Response Frame type " + frame.Header.Operation);
             }
-            return _responseHandlerFactory[opcode](frame);
+            return handler(frame);
         }
     }
 }

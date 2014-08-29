@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
 
 namespace Cassandra
 {
@@ -73,21 +71,17 @@ namespace Cassandra
 
         public override void Flush()
         {
-
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (this._position + count > TotalLength)
-            {
-                throw new IndexOutOfRangeException("Trying to read pass the total size.");
-            }
+            count = (int) Math.Min(TotalLength - _position, count);
+
             int read = 0;
-            int toRead = 0;
             while (read < count)
             {
                 var readBuffer = Buffers[_listIndexPosition];
-                toRead = readBuffer.Length - _listBytePosition;
+                int toRead = readBuffer.Length - _listBytePosition;
                 if (toRead + read > count)
                 {
                     toRead = count - read;
@@ -103,7 +97,7 @@ namespace Cassandra
                 }
             }
 
-            this._position += count;
+            _position += count;
             return count;
         }
 
@@ -129,7 +123,7 @@ namespace Cassandra
                 Buffers.Add(Utils.SliceBuffer(buffer, offset, count));
             }
             TotalLength += count;
-            this._position = TotalLength;
+            _position = TotalLength;
         }
     }
 }

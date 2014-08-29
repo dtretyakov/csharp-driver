@@ -18,7 +18,6 @@ namespace Cassandra
 {
     internal class EventResponse : AbstractResponse
     {
-        public const byte OpCode = 0x0C;
         private readonly Logger _logger = new Logger(typeof (EventResponse));
         /// <summary>
         /// Information on the actual event

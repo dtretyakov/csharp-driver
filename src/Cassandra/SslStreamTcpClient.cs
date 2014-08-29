@@ -28,7 +28,7 @@ namespace Cassandra
         /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>
         public override async Task ConnectAsync()
         {
-            await base.ConnectAsync();
+            await base.ConnectAsync().ConfigureAwait(false);
 
             string targetHost = EndPoint.Address.ToString();
             try
@@ -47,7 +47,7 @@ namespace Cassandra
             await sslStream.AuthenticateAsClientAsync(targetHost,
                 _sslOptions.CertificateCollection,
                 _sslOptions.SslProtocol,
-                _sslOptions.CheckCertificateRevocation);
+                _sslOptions.CheckCertificateRevocation).ConfigureAwait(false);
 
             SocketStream = sslStream;
         }

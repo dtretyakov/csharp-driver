@@ -18,8 +18,6 @@ namespace Cassandra
 {
     internal class AuthChallengeResponse : AbstractResponse
     {
-        public const byte OpCode = 0x0E;
-
         public byte[] Token;
 
         internal AuthChallengeResponse(ResponseFrame frame)

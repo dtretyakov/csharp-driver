@@ -33,7 +33,7 @@ namespace Cassandra
         {
             BeBinaryReader = new BEBinaryReader(frame.Body);
 
-            if ((frame.Header.Flags & 0x02) == 0x02)
+            if (frame.Header.Flags.HasFlag(FrameFlags.Tracing))
             {
                 var buffer = new byte[16];
                 BeBinaryReader.Read(buffer, 0, 16);

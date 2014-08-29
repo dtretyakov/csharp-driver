@@ -215,7 +215,7 @@ namespace Cassandra
         /// <inheritdoc />
         public Task<RowSet> ExecuteAsync(IStatement statement)
         {
-            return new RequestHandler<RowSet>(this, GetRequest(statement), statement).Send();
+            return new RequestHandler<RowSet>(this, GetRequest(statement), statement).SendAsync();
         }
 
         /// <summary>
@@ -294,7 +294,7 @@ namespace Cassandra
         public Task<PreparedStatement> PrepareAsync(string query)
         {
             var request = new PrepareRequest(this.BinaryProtocolVersion, query);
-            return new RequestHandler<PreparedStatement>(this, request, null).Send();
+            return new RequestHandler<PreparedStatement>(this, request, null).SendAsync();
         }
 
         public void WaitForSchemaAgreement(RowSet rs)

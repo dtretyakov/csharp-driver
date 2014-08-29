@@ -13,7 +13,6 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 //
-using System;
 
 namespace Cassandra
 {
@@ -27,8 +26,6 @@ namespace Cassandra
             Prepared = 4,
             SchemaChange = 5
         };
-
-        public const byte OpCode = 0x08;
 
         /// <summary>
         /// Cassandra result kind

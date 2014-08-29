@@ -74,6 +74,9 @@
     <Compile Include="..\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>
     </Compile>
+    <Compile Include="AsyncProducerConsumerCollection.cs" />
+    <Compile Include="FrameFlags.cs" />
+    <Compile Include="FrameOperation.cs" />
     <Compile Include="IConnection.cs" />
     <Compile Include="SslStreamTcpClient.cs" />
     <Compile Include="StreamTcpClient.cs" />

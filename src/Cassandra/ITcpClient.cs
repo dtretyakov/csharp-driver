@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Cassandra
@@ -27,11 +28,11 @@ namespace Cassandra
         ///     Begins an asynchronous request to receive data from a connected Socket object.
         ///     It handles the exceptions in case there is one.
         /// </summary>
-        Task<int> ReadAsync(byte[] buffer, int offset, int count);
+        Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default(CancellationToken));
 
         /// <summary>
         ///     Sends data asynchronously
         /// </summary>
-        Task WriteAsync(Stream stream);
+        Task WriteAsync(Stream stream, CancellationToken cancellationToken = default(CancellationToken));
     }
 }

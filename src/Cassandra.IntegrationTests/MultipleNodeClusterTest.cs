@@ -73,7 +73,7 @@ namespace Cassandra.IntegrationTests
             {
                 return;
             }
-            Diagnostics.CassandraTraceSwitch.Level = System.Diagnostics.TraceLevel.Info;
+            Diagnostics.CassandraTraceSwitch.Level = System.Diagnostics.TraceLevel.Verbose;
             Thread.CurrentThread.CurrentCulture = CultureInfo.CreateSpecificCulture("en-US");
             this.CcmClusterInfo = TestUtils.CcmSetup(NodeLength, Builder, "tester", 0, ConnectToCluster);
             this.Cluster = this.CcmClusterInfo.Cluster;

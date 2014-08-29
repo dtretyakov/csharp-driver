@@ -18,7 +18,6 @@ namespace Cassandra
 {
     internal class ErrorResponse : AbstractResponse
     {
-        public const byte OpCode = 0x00;
         public OutputError Output;
 
         internal ErrorResponse(ResponseFrame frame) 

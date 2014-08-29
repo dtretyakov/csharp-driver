@@ -32,7 +32,7 @@ namespace Cassandra
             EndPoint = endPoint;
             Options = options;
 
-            _tcpClient = new TcpClient(endPoint)
+            _tcpClient = new TcpClient
             {
                 SendTimeout = (int) Options.SendTimeout.TotalMilliseconds,
                 ReceiveTimeout = (int) Options.ReceiveTimeout.TotalMilliseconds
@@ -84,7 +84,7 @@ namespace Cassandra
         /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>
         public virtual async Task ConnectAsync()
         {
-            await _tcpClient.ConnectAsync(EndPoint.Address, EndPoint.Port);
+            await _tcpClient.ConnectAsync(EndPoint.Address, EndPoint.Port).ConfigureAwait(false);
             Logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", EndPoint));
             SocketStream = _tcpClient.GetStream();
         }
@@ -92,10 +92,10 @@ namespace Cassandra
         /// <summary>
         ///     Sends data asynchronously
         /// </summary>
-        public Task WriteAsync(Stream stream)
+        public Task WriteAsync(Stream stream, CancellationToken cancellationToken = default(CancellationToken))
         {
             ResetIdleTimer();
-            return stream.CopyToAsync(SocketStream);
+            return stream.CopyToAsync(SocketStream, _tcpClient.SendBufferSize, cancellationToken);
         }
 
         private void Disconnect(object state)
@@ -133,10 +133,10 @@ namespace Cassandra
         ///     Begins an asynchronous request to receive data from a connected Socket object.
         ///     It handles the exceptions in case there is one.
         /// </summary>
-        public Task<int> ReadAsync(byte[] buffer, int offset, int count)
+        public Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default(CancellationToken))
         {
             ResetIdleTimer();
-            return SocketStream.ReadAsync(buffer, offset, count);
+            return SocketStream.ReadAsync(buffer, offset, count, cancellationToken);
         }
 
         public void Dispose()
