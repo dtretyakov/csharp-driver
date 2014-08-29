@@ -1,7 +1,6 @@
 ﻿using NUnit.Framework;
 using System;
 using System.Diagnostics;
-using System.Linq.Expressions;
 
 namespace Cassandra.IntegrationTests.Core
 {
@@ -20,7 +19,7 @@ namespace Cassandra.IntegrationTests.Core
                 var builder = new Builder().WithDefaultKeyspace("system")
                                            .AddContactPoints("1.1.1.1") // IP address that drops (not rejects !) the inbound connection
                                            .WithQueryTimeout(500);
-                builder.SocketOptions.SetConnectTimeoutMillis(500);
+                builder.SocketOptions.SetIdleTimeout(TimeSpan.FromMilliseconds(500));
                 var cluster = builder.Build();
                 cluster.Connect();
             }
@@ -49,7 +48,7 @@ namespace Cassandra.IntegrationTests.Core
                 var builder = new Builder().WithDefaultKeyspace("system")
                                            .AddContactPoints(Options.Default.IP_PREFIX + "1") // IP address that rejects
                                            .WithQueryTimeout(500);
-                builder.SocketOptions.SetConnectTimeoutMillis(500);
+                builder.SocketOptions.SetIdleTimeout(TimeSpan.FromMilliseconds(500));
                 var cluster = builder.Build();
                 cluster.Connect();
             }

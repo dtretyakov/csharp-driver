@@ -1,5 +1,4 @@
-﻿using Moq;
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,7 +7,6 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -471,7 +469,7 @@ namespace Cassandra.IntegrationTests.Core
         public void WrongIpInitThrowsException()
         {
             var socketOptions = new SocketOptions();
-            socketOptions.SetConnectTimeoutMillis(1000);
+            socketOptions.SetIdleTimeout(TimeSpan.FromSeconds(1));
             var config = new Configuration(
                 new Cassandra.Policies(), 
                 new ProtocolOptions(), 
