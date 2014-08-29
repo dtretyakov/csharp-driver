@@ -29,13 +29,13 @@ namespace Cassandra
     {
         private readonly static Logger _logger = new Logger(typeof(Session));
 
-        private Connection _connection;
+        private IConnection _connection;
         private Host _currentHost;
         private readonly IRequest _request;
         private readonly IRetryPolicy _retryPolicy;
         private readonly Session _session;
         private readonly IStatement _statement;
-        private int _retryCount = 0;
+        private int _retryCount;
         private readonly TaskCompletionSource<T> _tcs;
         private readonly Dictionary<IPEndPoint, Exception> _triedHosts = new Dictionary<IPEndPoint, Exception>();
 
@@ -63,7 +63,7 @@ namespace Cassandra
         /// <summary>
         /// Determines if the host, due to the connection error can be resurrected if no other host is alive.
         /// </summary>
-        private static bool CanBeResurrected(SocketException ex, Connection connection)
+        private static bool CanBeResurrected(SocketException ex, IConnection connection)
         {
             if (connection == null || connection.IsDisposed)
             {
@@ -97,7 +97,7 @@ namespace Cassandra
             }
             if (rs.PagingState != null && _request is IQueryRequest && typeof(T) == typeof(RowSet))
             {
-                rs.FetchNextPage = (pagingState) =>
+                rs.FetchNextPage = pagingState =>
                 {
                     if (_session.IsDisposed)
                     {
@@ -119,7 +119,7 @@ namespace Cassandra
         /// <exception cref="NoHostAvailableException"/>
         /// <exception cref="InvalidQueryException">When keyspace does not exist</exception>
         /// <exception cref="UnsupportedProtocolVersionException"/>
-        internal Connection GetNextConnection(IStatement statement, bool isLastChance = false)
+        internal IConnection GetNextConnection(IStatement statement, bool isLastChance = false)
         {
             var hostEnumerable = _session.Policies.LoadBalancingPolicy.NewQueryPlan(statement);
             Host lastChanceHost = null;
@@ -136,7 +136,7 @@ namespace Cassandra
                 }
                 _currentHost = host;
                 _triedHosts[host.Address] = null;
-                Connection connection = null;
+                IConnection connection = null;
                 try
                 {
                     var distance = _session.Policies.LoadBalancingPolicy.Distance(host);

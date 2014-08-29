@@ -36,7 +36,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                Assert.DoesNotThrow(connection.Init);
+                Assert.DoesNotThrow(connection.ConnectAsync().Wait);
             }
         }
 
@@ -45,7 +45,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 //Start a query
                 var request = new QueryRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces", false, QueryProtocolOptions.Default);
                 var task = connection.SendAsync(request);
@@ -65,7 +65,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 var request = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces");
                 var task = connection.SendAsync(request);
                 task.Wait();
@@ -79,7 +79,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 var request = new PrepareRequest(connection.ProtocolVersion, "SELECT WILL FAIL");
                 var task = connection.SendAsync(request);
                 task.ContinueWith(t =>
@@ -95,7 +95,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 //Prepare a query
                 var prepareRequest = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_keyspaces");
@@ -118,7 +118,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 var prepareRequest = new PrepareRequest(connection.ProtocolVersion, "SELECT * FROM system.schema_columnfamilies WHERE keyspace_name = ?");
                 var task = connection.SendAsync(prepareRequest);
@@ -143,7 +143,7 @@ namespace Cassandra.IntegrationTests.Core
             var protocolOptions = new ProtocolOptions().SetCompression(CompressionType.LZ4);
             using (var connection = CreateConnection(protocolOptions))
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 //Start a query
                 var task = Query(connection, "SELECT * FROM system.schema_keyspaces", QueryProtocolOptions.Default);
@@ -163,7 +163,7 @@ namespace Cassandra.IntegrationTests.Core
             var protocolOptions = new ProtocolOptions().SetCompression(CompressionType.Snappy);
             using (var connection = CreateConnection(protocolOptions))
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 //Start a query
                 var task = Query(connection, "SELECT * FROM system.schema_keyspaces", QueryProtocolOptions.Default);
@@ -185,7 +185,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 //Start a query
                 var task = Query(connection, "SELECT WILL FAIL", QueryProtocolOptions.Default);
@@ -204,7 +204,7 @@ namespace Cassandra.IntegrationTests.Core
             var socketOptions = new SocketOptions().SetReceiveBufferSize(128);
             using (var connection = CreateConnection(null, socketOptions))
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 var taskList = new List<Task<AbstractResponse>>();
                 //Run a query multiple times
                 for (var i = 0; i < 16; i++)
@@ -226,7 +226,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 var taskList = new List<Task>();
                 //Run the query more times than the max allowed
                 for (var i = 0; i < connection.MaxConcurrentRequests * 2; i++)
@@ -243,7 +243,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 //Run a query multiple times
                 for (var i = 0; i < 8; i++)
                 {
@@ -262,7 +262,7 @@ namespace Cassandra.IntegrationTests.Core
             CassandraEventArgs eventArgs = null;
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 var eventTypes = CassandraEventType.TopologyChange | CassandraEventType.StatusChange | CassandraEventType.SchemaChange;
                 var task = connection.SendAsync(new RegisterForEventRequest(connection.ProtocolVersion, eventTypes));
                 TaskHelper.WaitToComplete(task, 1000);
@@ -312,7 +312,7 @@ namespace Cassandra.IntegrationTests.Core
             var socketOptions = new SocketOptions();
             using (var connection = CreateConnection(new ProtocolOptions(), new SocketOptions().SetStreamMode(true)))
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 var taskList = new List<Task<AbstractResponse>>();
                 //Run the query multiple times
@@ -353,7 +353,7 @@ namespace Cassandra.IntegrationTests.Core
             var sslOptions = new SSLOptions().SetCertificateCollection(certs).SetRemoteCertValidationCallback(callback);
             using (var connection = CreateConnection(new ProtocolOptions(ProtocolOptions.DefaultPort, sslOptions)))
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
 
                 var taskList = new List<Task<AbstractResponse>>();
                 //Run the query multiple times
@@ -388,7 +388,7 @@ namespace Cassandra.IntegrationTests.Core
             using (var connection = CreateConnection(protocolVersion, config))
             {
                 //Authentication will happen on init
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 //Try to query
                 var r = TaskHelper.WaitToComplete(Query(connection, "SELECT * FROM system.schema_keyspaces"), 60000);
                 Assert.IsInstanceOf<ResultResponse>(r);
@@ -407,7 +407,7 @@ namespace Cassandra.IntegrationTests.Core
                 new DefaultAddressTranslator());
             using (var connection = CreateConnection(protocolVersion, config))
             {
-                Assert.Throws<AuthenticationException>(connection.Init);
+                Assert.Throws<AuthenticationException>(() => connection.ConnectAsync().Wait());
             }
         }
 
@@ -429,7 +429,7 @@ namespace Cassandra.IntegrationTests.Core
             using (var connection = CreateConnection(protocolVersion, config))
             {
                 //Authentication will happen on init
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 //Try to query
                 var r = TaskHelper.WaitToComplete(Query(connection, "SELECT * FROM system.schema_keyspaces"), 60000);
                 Assert.IsInstanceOf<ResultResponse>(r);
@@ -448,7 +448,7 @@ namespace Cassandra.IntegrationTests.Core
                 new DefaultAddressTranslator());
             using (var connection = CreateConnection(protocolVersion, config))
             {
-                Assert.Throws<AuthenticationException>(connection.Init);
+                Assert.Throws<AuthenticationException>(() => connection.ConnectAsync().Wait());
             }
         }
 
@@ -457,7 +457,7 @@ namespace Cassandra.IntegrationTests.Core
         {
             using (var connection = CreateConnection())
             {
-                connection.Init();
+                connection.ConnectAsync().Wait();
                 Assert.Null(connection.Keyspace);
                 connection.Keyspace = "system";
                 //If it was executed correctly, it should be set
@@ -486,7 +486,7 @@ namespace Cassandra.IntegrationTests.Core
             {
                 using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 1, 1, 1, 1 }), 9042), config))
                 {
-                    connection.Init();
+                    connection.ConnectAsync().Wait();
                     Assert.Fail("It must throw an exception");
                 }
             }
@@ -499,7 +499,7 @@ namespace Cassandra.IntegrationTests.Core
             {
                 using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 255, 255, 255, 255 }), 9042), config))
                 {
-                    connection.Init();
+                    connection.ConnectAsync().Wait();
                     Assert.Fail("It must throw an exception");
                 }
             }
@@ -513,7 +513,7 @@ namespace Cassandra.IntegrationTests.Core
         public void ConnectionCloseFaultsAllPendingTasks()
         {
             var connection = CreateConnection();
-            connection.Init();
+            connection.ConnectAsync().Wait();
             //Queue a lot of read and writes
             var taskList = new List<Task<AbstractResponse>>();
             for (var i = 0; i < 1024; i++)
@@ -555,7 +555,7 @@ namespace Cassandra.IntegrationTests.Core
             const byte protocolVersion = 2;
             using (var connection = CreateConnection(protocolVersion, new Configuration()))
             {
-                Assert.Throws<UnsupportedProtocolVersionException>(connection.Init);
+                Assert.Throws<UnsupportedProtocolVersionException>(() => connection.ConnectAsync().Wait());
             }
         }
 

@@ -40,7 +40,7 @@ namespace Cassandra
         /// </summary>
         private int _controlConnectionProtocolVersion = 2;
 
-        private readonly AtomicValue<Connection> _activeConnection = new AtomicValue<Connection>(null);
+        private readonly AtomicValue<IConnection> _activeConnection = new AtomicValue<IConnection>(null);
         private readonly Cluster _cluster;
         private readonly IAddressTranslator _addressTranslator;
 
@@ -167,7 +167,7 @@ namespace Cassandra
         {
             _session.BinaryProtocolVersion = _controlConnectionProtocolVersion;
             var handler = new RequestHandler<RowSet>(_session, null, null);
-            Connection connection = null;
+            IConnection connection;
             try
             {
                 connection = handler.GetNextConnection(null);
@@ -475,7 +475,7 @@ namespace Cassandra
             return ((task.Result as ResultResponse).Output as OutputRows).RowSet;
         }
 
-        private bool WaitForSchemaAgreement()
+        private void WaitForSchemaAgreement()
         {
             DateTimeOffset start = DateTimeOffset.Now;
             long elapsed = 0;
@@ -517,14 +517,14 @@ namespace Cassandra
 
 
                 if (versions.Count <= 1)
-                    return true;
+                    return;
 
                 // let's not flood the node too much
                 Thread.Sleep(200);
                 elapsed = (long) (DateTimeOffset.Now - start).TotalMilliseconds;
             }
 
-            return false;
+            return;
         }
 
         internal void SubmitSchemaRefresh(string keyspace, string table)
@@ -872,7 +872,7 @@ namespace Cassandra
                 {
                     var name = keys[i].Replace("\"", "").Trim();
                     var dataType = TypeCodec.ParseDataType(keyTypes[i].Trim());
-                    cols[name] = new TableColumn()
+                    cols[name] = new TableColumn
                     {
                         Name = name,
                         Keyspace = row.GetValue<string>("keyspace_name"),

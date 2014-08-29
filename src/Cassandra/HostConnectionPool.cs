@@ -11,16 +11,16 @@ namespace Cassandra
     internal class HostConnectionPool
     {
         private readonly static Logger _logger = new Logger(typeof(HostConnectionPool));
-        private ConcurrentBag<Connection> _connections;
+        private ConcurrentBag<IConnection> _connections;
         private readonly object _poolCreationLock = new object();
-        private int _creating = 0;
+        private int _creating;
 
         private Configuration Configuration { get; set; }
 
         /// <summary>
         /// Gets a list of connections already opened to the host
         /// </summary>
-        public IEnumerable<Connection> OpenConnections 
+        public IEnumerable<IConnection> OpenConnections 
         { 
             get
             {
@@ -40,16 +40,16 @@ namespace Cassandra
 
         public HostConnectionPool(Host host, HostDistance hostDistance, Configuration configuration)
         {
-            this.Host = host;
-            this.HostDistance = hostDistance;
-            this.Configuration = configuration;
+            Host = host;
+            HostDistance = hostDistance;
+            Configuration = configuration;
         }
 
         /// <summary>
         /// Gets an open connection from the host pool (creating if necessary).
         /// It returns null if the load balancing policy didn't allow connections to this host.
         /// </summary>
-        public Connection BorrowConnection()
+        public IConnection BorrowConnection()
         {
             MaybeCreateCorePool();
             if (_connections.Count == 0)
@@ -62,11 +62,10 @@ namespace Cassandra
             return connection;
         }
 
-        private Connection CreateConnection()
+        private IConnection CreateConnection()
         {
             _logger.Info("Creating a new connection to the host " + Host);
             var connection = new Connection(ProtocolVersion, Host.Address, Configuration);
-            connection.Init();
             return connection;
         }
 
@@ -84,7 +83,7 @@ namespace Cassandra
                     {
                         return;
                     }
-                    _connections = new ConcurrentBag<Connection>();
+                    _connections = new ConcurrentBag<IConnection>();
                     while (_connections.Count < coreConnections)
                     {
                         try

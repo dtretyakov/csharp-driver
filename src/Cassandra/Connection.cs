@@ -13,7 +13,7 @@ namespace Cassandra
     /// <summary>
     /// Represents a TCP connection to a Cassandra Node
     /// </summary>
-    internal class Connection : IDisposable
+    internal class Connection : IConnection
     {
         private static readonly Logger _logger = new Logger(typeof(Connection));
         private readonly ITcpClient _tcpClient;
@@ -26,7 +26,7 @@ namespace Cassandra
         /// <summary>
         /// Stores the available stream ids.
         /// </summary>
-        private ConcurrentStack<short> _freeOperations;
+        private readonly ConcurrentStack<short> _freeOperations;
         /// <summary>
         /// Contains the requests that were sent through the wire and that hasn't been received yet.
         /// </summary>
@@ -253,20 +253,20 @@ namespace Cassandra
                 return;
             }
 
-            if (response is AuthChallengeResponse)
+            if (!(response is AuthChallengeResponse))
             {
-                token = authenticator.EvaluateChallenge((response as AuthChallengeResponse).Token);
-                if (token == null)
-                {
-                    // If we get a null response, then authentication has completed
-                    //return without sending a further response back to the server.
-                    return;
-                }
+                throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
+            }
 
-                await AuthenticateAsync(token, authenticator);
+            token = authenticator.EvaluateChallenge((response as AuthChallengeResponse).Token);
+            if (token == null)
+            {
+                // If we get a null response, then authentication has completed
+                //return without sending a further response back to the server.
                 return;
             }
-            throw new ProtocolErrorException("Expected SASL response, obtained " + response.GetType().Name);
+
+            await AuthenticateAsync(token, authenticator);
         }
 
         /// <summary>
@@ -310,14 +310,15 @@ namespace Cassandra
         {
             OperationState state = null;
             byte[] minimalBuffer = null;
-            var receiveBuffer = new byte[_tcpClient.ReceiveBufferSize];
+            var buffer = new byte[_tcpClient.ReceiveBufferSize];
 
             do
             {
-                int bytesRead, offset, count;
+                // Receive data from connection
+                int bytesRead, offset = 0, count = 0;
                 try
                 {
-                    bytesRead = await _tcpClient.ReadAsync(receiveBuffer, 0, receiveBuffer.Length);
+                    bytesRead = await _tcpClient.ReadAsync(buffer, offset, buffer.Length);
                 }
                 catch (Exception e)
                 {
@@ -328,31 +329,37 @@ namespace Cassandra
                 if (bytesRead == 0)
                 {
                     CancelPending(new SocketException((int)SocketError.Disconnecting));
+                    return;
                 }
 
                 if (state == null)
                 {
                     if (minimalBuffer != null)
                     {
-                        receiveBuffer = Utils.JoinBuffers(minimalBuffer, 0, minimalBuffer.Length, buffer, offset, count);
+                        buffer = Utils.JoinBuffers(minimalBuffer, 0, minimalBuffer.Length, buffer, 0, bytesRead);
                         offset = 0;
                         count = buffer.Length;
                     }
+
                     var headerSize = FrameHeader.GetSize(ProtocolVersion);
                     if (count < headerSize)
                     {
                         //There is not enough data to read the header
                         minimalBuffer = Utils.SliceBuffer(buffer, offset, count);
-                        return;
+                        continue;
                     }
+
                     minimalBuffer = null;
+
                     var header = FrameHeader.ParseResponseHeader(ProtocolVersion, buffer, offset);
                     if (!header.IsValidResponse())
                     {
                         _logger.Error("Not a response header");
                     }
+
                     offset += headerSize;
                     count -= headerSize;
+
                     if (header.Opcode != EventResponse.OpCode)
                     {
                         //Its a response to a previous request
@@ -362,25 +369,21 @@ namespace Cassandra
                     {
                         //Its an event
                         state = new OperationState();
-                        state.Callback = EventHandler;
                     }
+
                     state.Header = header;
-                    _receivingOperation = state;
                 }
 
-                var countAdded = state.AppendBody(buffer, offset, count);
-
+                state.AppendBody(buffer, offset, count);
                 if (state.IsBodyComplete)
                 {
                     _logger.Verbose("Read #" + state.Header.StreamId + " for Opcode " + state.Header.Opcode);
-                    //Stop reference it as the current receiving operation
-                    _receivingOperation = null;
-                    AbstractResponse response;
 
+                    AbstractResponse response = null;
                     try
                     {
                         response = ReadParseResponse(state.Header, state.BodyStream);
-                        state.InvokeCallback(null, response);
+                        state.Response.SetResult(response);
                     }
                     catch (Exception ex)
                     {
@@ -394,16 +397,10 @@ namespace Cassandra
                         //Release the streamId
                         _freeOperations.Push(state.Header.StreamId);
                     }
-                    else
+                    else if (response != null)
                     {
+                        // Process event
                         ProcessEventResponse(response);
-                    }
-
-
-                    if (countAdded < count)
-                    {
-                        //There is more data, from the next frame
-                        ReadParse(buffer, offset + countAdded, count - countAdded);
                     }
                 }
             } while (!_isCanceled);
@@ -479,15 +476,28 @@ namespace Cassandra
             var state = new OperationState
             {
                 Request = request,
-                Callback = callback
+                Response = new TaskCompletionSource<AbstractResponse>()
             };
-            SendQueueProcess(state);
+
+            state.Response.Task.ContinueWith(p =>
+            {
+                if (p.IsCanceled || p.IsFaulted)
+                {
+                    callback(p.Exception, null);
+                }
+                else
+                {
+                    callback(null, p.Result);
+                }
+            });
+
+            TaskHelper.WaitToComplete(SendQueueProcessAsync(state), _tcpClient.Options.SendTimeout);
         }
 
         /// <summary>
         /// Try to write the item provided. Thread safe.
         /// </summary>
-        private async Task SendQueueProcess(OperationState state)
+        private async Task SendQueueProcessAsync(OperationState state)
         {
             if (!_canWriteNext)
             {
@@ -542,44 +552,9 @@ namespace Cassandra
             }
         }
 
-        /// <summary>
-        /// Try to write the next item in the write queue. Thread safe.
-        /// </summary>
-        protected virtual void SendQueueNext()
+        public IEnumerable<Task> GetPending()
         {
-            if (!_canWriteNext)
-            {
-                return;
-            }
-            OperationState state;
-            if (_writeQueue.TryDequeue(out state))
-            {
-                SendQueueProcess(state);
-            }
-        }
-
-        /// <summary>
-        /// Method that gets executed when a write request has been completed.
-        /// </summary>
-        protected virtual void WriteCompletedHandler()
-        {
-            //There is no need to lock
-            //Only 1 thread can be here at the same time.
-            _canWriteNext = true;
-            SendQueueNext();
-        }
-
-        internal WaitHandle WaitPending()
-        {
-            if (_pendingWaitHandle == null)
-            {
-                _pendingWaitHandle = new AutoResetEvent(false);
-            }
-            if (_pendingOperations.Count == 0 && _writeQueue.Count == 0)
-            {
-                _pendingWaitHandle.Set();
-            }
-            return _pendingWaitHandle;
+            return _pendingOperations.Select(p => p.Value.Response.Task);
         }
     }
 }

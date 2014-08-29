@@ -221,10 +221,10 @@ namespace Cassandra
         /// <summary>
         /// Gets a list of all opened connections to all hosts
         /// </summary>
-        private List<Connection> GetAllConnections()
+        private List<IConnection> GetAllConnections()
         {
             var hosts = Cluster.AllHosts();
-            var connections = new List<Connection>();
+            var connections = new List<IConnection>();
             foreach (var host in hosts)
             {
                 if (!host.IsUp)
@@ -328,12 +328,14 @@ namespace Cassandra
             {
                 return true;
             }
+            
             _logger.Info("Waiting for pending operations of " + connections.Count + " connections to complete.");
-            var handles = connections.Select(c => c.WaitPending()).ToArray();
-            return WaitHandle.WaitAll(handles, timeout);
+
+            var pendingTasks = connections.SelectMany(c => c.GetPending()).ToArray();
+            return Task.WaitAll(pendingTasks, timeout);
         }
 
-        internal void SetHostDown(Host host, Connection connection)
+        internal void SetHostDown(Host host, IConnection connection)
         {
             if (connection != null && connection.IsDisposed)
             {
