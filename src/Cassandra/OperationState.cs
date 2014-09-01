@@ -1,5 +1,4 @@
 ﻿using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Cassandra
@@ -41,8 +40,6 @@ namespace Cassandra
         public IRequest Request { get; set; }
 
         public TaskCompletionSource<AbstractResponse> Response { get; private set; }
-
-        public CancellationTokenSource TokenSource { get; set; }
 
         public OperationState()
         {

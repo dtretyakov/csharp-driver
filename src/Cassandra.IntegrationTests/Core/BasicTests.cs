@@ -126,7 +126,7 @@ namespace Cassandra.IntegrationTests.Core
 
             Guid tweet_id = Guid.NewGuid();
 
-            Parallel.For(0, 10,
+            Parallel.For(0, 100,
                          i =>
                          {
                              QueryTools.ExecuteSyncNonQuery(Session,

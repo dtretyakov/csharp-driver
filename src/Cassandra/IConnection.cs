@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Cassandra
@@ -32,11 +31,6 @@ namespace Cassandra
         /// </summary>
         string Keyspace { get; set; }
 
-        /// <summary>
-        ///     Gets the amount of concurrent requests depending on the protocol version
-        /// </summary>
-        int MaxConcurrentRequests { get; }
-
         ProtocolOptions Options { get; }
         byte ProtocolVersion { get; }
         Configuration Configuration { get; }
@@ -51,7 +45,7 @@ namespace Cassandra
         /// <summary>
         ///     Sends a new request if possible. If it is not possible it queues it up.
         /// </summary>
-        Task<AbstractResponse> SendAsync(IRequest request, CancellationToken cancellationToken = default (CancellationToken));
+        Task<AbstractResponse> SendAsync(IRequest request);
 
         /// <summary>
         ///     Sends a new request if possible and executes the callback when the response is parsed. If it is not possible it

@@ -222,12 +222,13 @@ namespace Cassandra.IntegrationTests.Core
         [Test]
         public void QueryMultipleAsyncConsumeAllStreamIdsTest()
         {
+            var connectionManager = new ConnectionManager(GetLatestProtocolVersion());
             using (var connection = CreateConnection())
             {
                 connection.ConnectAsync().Wait();
                 var taskList = new List<Task>();
                 //Run the query more times than the max allowed
-                for (var i = 0; i < connection.MaxConcurrentRequests * 2; i++)
+                for (var i = 0; i < connectionManager.MaxConcurrentRequests * 2; i++)
                 {
                     taskList.Add(Query(connection, "SELECT * FROM system.schema_keyspaces", QueryProtocolOptions.Default));
                 }
@@ -480,9 +481,10 @@ namespace Cassandra.IntegrationTests.Core
                 null,
                 new QueryOptions(),
                 new DefaultAddressTranslator());
+            var connectionManager = new ConnectionManager(GetLatestProtocolVersion());
             try
             {
-                using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 1, 1, 1, 1 }), 9042), config))
+                using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 1, 1, 1, 1 }), 9042), config, connectionManager))
                 {
                     connection.ConnectAsync().Wait();
                     Assert.Fail("It must throw an exception");
@@ -495,7 +497,7 @@ namespace Cassandra.IntegrationTests.Core
             }
             try
             {
-                using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 255, 255, 255, 255 }), 9042), config))
+                using (var connection = new Connection(1, new IPEndPoint(new IPAddress(new byte[] { 255, 255, 255, 255 }), 9042), config, connectionManager))
                 {
                     connection.ConnectAsync().Wait();
                     Assert.Fail("It must throw an exception");
@@ -601,7 +603,8 @@ namespace Cassandra.IntegrationTests.Core
         private Connection CreateConnection(byte protocolVersion, Configuration config)
         {
             Trace.TraceInformation("Creating test connection using protocol v{0}", protocolVersion);
-            return new Connection(protocolVersion, new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9042), config);
+            var connectionManager = new ConnectionManager(GetLatestProtocolVersion());
+            return new Connection(protocolVersion, new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9042), config, connectionManager);
         }
 
         private static Task<AbstractResponse> Query(Connection connection, string query, QueryProtocolOptions options = null)

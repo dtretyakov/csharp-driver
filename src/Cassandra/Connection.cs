@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -15,20 +16,17 @@ namespace Cassandra
     /// </summary>
     internal class Connection : IConnection
     {
+        private readonly IConnectionManager _connectionManager;
         private static readonly Logger Logger = new Logger(typeof(Connection));
         private readonly ITcpClient _tcpClient;
         private int _disposed;
+        private static ConcurrentDictionary<short, short> _usedStreamIds = new ConcurrentDictionary<short, short>();
         
         /// <summary>
         /// Determines that the connection canceled pending operations.
         /// It could be because its being closed or there was a socket error.
         /// </summary>
         private readonly CancellationTokenSource _tokenSource = new CancellationTokenSource();
-        
-        /// <summary>
-        /// Stores the available stream ids.
-        /// </summary>
-        private readonly AsyncProducerConsumerCollection<short> _availableStreams;
         
         /// <summary>
         /// Contains the requests that were sent through the wire and that hasn't been received yet.
@@ -106,29 +104,11 @@ namespace Cassandra
                     {
                         return;
                     }
-                    Logger.Info("Connection to host " + Address + " switching to keyspace " + value);
+                    Logger.Info(string.Format("Host {0}: connection established, switching to keyspace {1}", Address, value));
                     _keyspace = value;
                     var request = new QueryRequest(ProtocolVersion, String.Format("USE \"{0}\"", value), false, QueryProtocolOptions.Default);
                     TaskHelper.WaitToComplete(SendAsync(request), Configuration.SocketOptions.SendTimeout);
                 }
-            }
-        }
-
-        /// <summary>
-        /// Gets the amount of concurrent requests depending on the protocol version
-        /// </summary>
-        public int MaxConcurrentRequests
-        {
-            get
-            {
-                if (ProtocolVersion < 3)
-                {
-                    return 128;
-                }
-                //Protocol 3 supports up to 32K concurrent request without waiting a response
-                //Allowing larger amounts of concurrent requests will cause large memory consumption
-                //Limit to 2K per connection sounds reasonable.
-                return 2048;
             }
         }
 
@@ -138,13 +118,12 @@ namespace Cassandra
 
         public Configuration Configuration { get; private set; }
 
-        public Connection(byte protocolVersion, IPEndPoint endpoint, Configuration configuration)
+        public Connection(byte protocolVersion, IPEndPoint endpoint, Configuration configuration, IConnectionManager connectionManager)
         {
+            _connectionManager = connectionManager;
             ProtocolVersion = protocolVersion;
             Configuration = configuration;
-
-            var streamIds = Enumerable.Range(0, MaxConcurrentRequests).Select(s => (short) s);
-            _availableStreams = new AsyncProducerConsumerCollection<short>(streamIds);
+            
             _pendingOperations = new ConcurrentDictionary<short, OperationState>();
             _writeQueue = new AsyncProducerConsumerCollection<OperationState>();
 
@@ -224,7 +203,7 @@ namespace Cassandra
                 if (Configuration.AuthInfoProvider == null)
                 {
                     throw new AuthenticationException(
-                        String.Format("Host {0} requires authentication, but no credentials provided in Cluster configuration", Address),
+                        String.Format("Host {0}: authentication required, but no credentials provided in Cluster configuration", Address),
                         Address);
                 }
                 var credentialsProvider = Configuration.AuthInfoProvider;
@@ -279,7 +258,7 @@ namespace Cassandra
             var pendingOperations = Interlocked.Exchange(ref _pendingOperations, new ConcurrentDictionary<short, OperationState>());
             var writeQueue = Interlocked.Exchange(ref _writeQueue, new AsyncProducerConsumerCollection<OperationState>());
 
-            Logger.Info("Canceling pending operations " + pendingOperations.Count + " and write queue " + writeQueue.Count);
+            Logger.Info(string.Format("Host {0}: canceling pending operations {1} and write queue {2}", Address, pendingOperations.Count, writeQueue.Count));
 
             foreach (var operation in pendingOperations)
             {
@@ -318,7 +297,7 @@ namespace Cassandra
                 int offset = 0, count;
                 try
                 {
-                    count = await _tcpClient.ReadAsync(buffer, offset, buffer.Length, _tokenSource.Token).ConfigureAwait(false);
+                    count = await _tcpClient.ReadAsync(buffer, offset, buffer.Length).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -328,102 +307,121 @@ namespace Cassandra
 
                 if (count == 0)
                 {
-                    CancelPending(new SocketException((int)SocketError.Disconnecting));
+                    CancelPending(new SocketException((int) SocketError.Disconnecting));
                     return;
                 }
 
-                if (state == null)
+                Logger.Verbose(string.Format("Host {0}: received {1} bytes", Address, count));
+
+                // Process received data
+                do
                 {
-                    if (minimalBuffer != null)
+                    if (state == null)
                     {
-                        buffer = Utils.JoinBuffers(minimalBuffer, 0, minimalBuffer.Length, buffer, 0, count);
-                        offset = 0;
-                        count = buffer.Length;
-                    }
+                        if (minimalBuffer != null)
+                        {
+                            buffer = Utils.JoinBuffers(minimalBuffer, 0, minimalBuffer.Length, buffer, 0, count);
+                            offset = 0;
+                            count = buffer.Length;
+                        }
 
-                    var headerSize = FrameHeader.GetSize(ProtocolVersion);
-                    if (count < headerSize)
-                    {
-                        //There is not enough data to read the header
-                        minimalBuffer = Utils.SliceBuffer(buffer, offset, count);
-                        continue;
-                    }
+                        var headerSize = FrameHeader.GetSize(ProtocolVersion);
+                        if (count < headerSize)
+                        {
+                            //There is not enough data to read the header
+                            minimalBuffer = Utils.SliceBuffer(buffer, offset, count);
+                            continue;
+                        }
 
-                    minimalBuffer = null;
+                        minimalBuffer = null;
 
-                    var header = FrameHeader.ParseResponseHeader(ProtocolVersion, buffer, offset);
-                    if (!header.IsValidResponse())
-                    {
-                        Logger.Error("Not a response header");
-                    }
+                        var header = FrameHeader.ParseResponseHeader(ProtocolVersion, buffer, offset);
+                        if (!header.IsValidResponse())
+                        {
+                            Logger.Error("Not a response header");
+                        }
 
-                    offset += headerSize;
-                    count -= headerSize;
-                    state = header.Operation != FrameOperation.Event ? _pendingOperations[header.StreamId] : new OperationState
-                    {
-                        TokenSource = new CancellationTokenSource()
-                    };
-                    state.Header = header;
-                }
+                        Logger.Verbose(string.Format("Host {0}, stream #{1}: processing frame with header {2} and body {3}", Address, header.StreamId, headerSize, header.BodyLength));
 
-                state.AppendBody(buffer, offset, count);
-                if (state.IsBodyComplete)
-                {
-                    Logger.Verbose(string.Format("Stream #{0}: received response {1}", state.Header.StreamId, state.Header.Operation));
+                        offset += headerSize;
+                        count -= headerSize;
 
-                    if (state.TokenSource.IsCancellationRequested)
-                    {
-                        state.Response.SetCanceled();
-                        continue;
-                    }
-
-                    AbstractResponse response = null;
-                    try
-                    {
-                        response = ReadParseResponse(state.Header, state.BodyStream);
-                    }
-                    catch (Exception ex)
-                    {
-                        state.Response.SetException(ex);
-                    }
-
-                    var errorResponse = response as ErrorResponse;
-                    if (errorResponse != null)
-                    {
-                        state.Response.SetException(errorResponse.Output.CreateException());
-                    }
-                    else
-                    {
-                        state.Response.SetResult(response);
-                    }
-
-                    switch (state.Header.Operation)
-                    {
-                        case FrameOperation.Event:
-                            if (response != null)
+                        if (header.Operation == FrameOperation.Event)
+                        {
+                            state = new OperationState();
+                        }
+                        else
+                        {
+                            if (!_pendingOperations.TryGetValue(header.StreamId, out state))
                             {
-                                ProcessEventResponse(response);
+                                Logger.Error(string.Format("Host {0}, stream #{1}: unable to find response handler", Address, header.StreamId));
+                                continue;
                             }
-                            break;
-                        default:
-                            //Remove from pending
-                            _pendingOperations.TryRemove(state.Header.StreamId, out state);
-                            //Release the streamId
-                            _availableStreams.Add(state.Header.StreamId);
-                            break;
+                        }
+
+                        state.Header = header;
                     }
 
-                    // Response was processed
-                    state = null;
-                }
+                    var appendedBytes = state.AppendBody(buffer, offset, count);
+                    if (state.IsBodyComplete)
+                    {
+                        Logger.Verbose(string.Format("Host {0}, stream #{1}: received response {2}",
+                            Address, state.Header.StreamId, state.Header.Operation));
+
+                        AbstractResponse response = null;
+                        try
+                        {
+                            response = ReadParseResponse(state.Header, state.BodyStream);
+                        }
+                        catch (Exception ex)
+                        {
+                            state.Response.SetException(ex);
+                        }
+
+                        var errorResponse = response as ErrorResponse;
+                        if (errorResponse != null)
+                        {
+                            state.Response.SetException(errorResponse.Output.CreateException());
+                        }
+                        else
+                        {
+                            state.Response.SetResult(response);
+                        }
+
+                        switch (state.Header.Operation)
+                        {
+                            case FrameOperation.Event:
+                                if (response != null)
+                                {
+                                    ProcessEventResponse(response);
+                                }
+                                break;
+                            default:
+                                //Remove from pending
+                                _pendingOperations.TryRemove(state.Header.StreamId, out state);
+                                //Release the streamId
+                                _connectionManager.AddStreamId(state.Header.StreamId);
+                                break;
+                        }
+
+                        // Response was processed
+                        state = null;
+                    }
+
+                    count -= appendedBytes;
+                    offset += appendedBytes;
+                } while (count > 0);
+
             } while (!_tokenSource.IsCancellationRequested);
+
+            Debugger.Break();
         }
 
         private void ProcessEventResponse(AbstractResponse response)
         {
             if (!(response is EventResponse))
             {
-                Logger.Error("Unexpected response type for event: " + response.GetType().Name);
+                Logger.Error(string.Format("Host {0}: unexpected response type for event: {1}", Address, response.GetType().Name));
                 return;
             }
             if (CassandraEventResponse != null)
@@ -466,7 +464,7 @@ namespace Cassandra
         /// <summary>
         /// Sends a new request if possible. If it is not possible it queues it up.
         /// </summary>
-        public Task<AbstractResponse> SendAsync(IRequest request, CancellationToken cancellationToken = default (CancellationToken))
+        public Task<AbstractResponse> SendAsync(IRequest request)
         {
             var tcs = new TaskCompletionSource<AbstractResponse>();
             if (_tokenSource.IsCancellationRequested)
@@ -478,8 +476,7 @@ namespace Cassandra
             // thread safe write queue
             var state = new OperationState
             {
-                Request = request,
-                TokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tokenSource.Token)
+                Request = request
             };
 
             _writeQueue.Add(state);
@@ -513,9 +510,17 @@ namespace Cassandra
             do
             {
                 var state = await _writeQueue.TakeAsync().ConfigureAwait(false);
-                var streamId = await _availableStreams.TakeAsync().ConfigureAwait(false);
+                var streamId = await _connectionManager.GetStreamId().ConfigureAwait(false);
+                if (_usedStreamIds.ContainsKey(streamId))
+                {
+                    Debugger.Break();
+                }
+                else
+                {
+                    _usedStreamIds[streamId] = streamId;
+                }
 
-                Logger.Verbose(string.Format("Stream #{0}: sending request {1}", streamId, state.Request.GetType().Name));
+                Logger.Verbose(string.Format("Host {0}, stream #{1}: sending request {2}", Address, streamId, state.Request.GetType().Name));
 
                 _pendingOperations.AddOrUpdate(streamId, state, (k, oldValue) => state);
 
@@ -529,7 +534,7 @@ namespace Cassandra
                     //We will not use the request, stop reference it.
                     state.Request = null;
                     //Start sending it
-                    await _tcpClient.WriteAsync(frameStream, _tokenSource.Token).ConfigureAwait(false);
+                    await _tcpClient.WriteAsync(frameStream).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -537,12 +542,13 @@ namespace Cassandra
 
                     // The request was not written
                     _pendingOperations.TryRemove(streamId, out state);
-                    _availableStreams.Add(streamId);
+                    _connectionManager.AddStreamId(streamId);
 
                     state.Response.SetException(ex);
                 }
-
             } while (!_tokenSource.IsCancellationRequested);
+
+            Debugger.Break();
         }
 
         public IEnumerable<Task> GetPending()

@@ -29,7 +29,7 @@ namespace Cassandra
     /// <inheritdoc cref="Cassandra.ISession" />
     public class Session : ISession
     {
-        private static Logger _logger = new Logger(typeof(Session));
+        private static readonly Logger Logger = new Logger(typeof(Session));
         
         private readonly ConcurrentDictionary<IPEndPoint, HostConnectionPool> _connectionPool;
         private int _disposed;
@@ -91,10 +91,10 @@ namespace Cassandra
         /// <inheritdoc />
         public void ChangeKeyspace(string keyspace)
         {
-            if (this.Keyspace != keyspace)
+            if (Keyspace != keyspace)
             {
-                this.Execute(new SimpleStatement(CqlQueryTools.GetUseKeyspaceCql(keyspace)));
-                this.Keyspace = keyspace;
+                Execute(new SimpleStatement(CqlQueryTools.GetUseKeyspaceCql(keyspace)));
+                Keyspace = keyspace;
             }
         }
 
@@ -102,7 +102,7 @@ namespace Cassandra
         public void CreateKeyspace(string keyspace, Dictionary<string, string> replication = null, bool durableWrites = true)
         {
             WaitForSchemaAgreement(Execute(CqlQueryTools.GetCreateKeyspaceCql(keyspace, replication, durableWrites, false)));
-            _logger.Info("Keyspace [" + keyspace + "] has been successfully CREATED.");
+            Logger.Info("Keyspace [" + keyspace + "] has been successfully CREATED.");
         }
 
         /// <inheritdoc />
@@ -114,7 +114,7 @@ namespace Cassandra
             }
             catch (AlreadyExistsException)
             {
-                _logger.Info(string.Format("Cannot CREATE keyspace:  {0}  because it already exists.", keyspaceName));
+                Logger.Info(string.Format("Cannot CREATE keyspace:  {0}  because it already exists.", keyspaceName));
             }
         }
 
@@ -133,7 +133,7 @@ namespace Cassandra
             }
             catch (InvalidQueryException)
             {
-                _logger.Info(string.Format("Cannot DELETE keyspace:  {0}  because it not exists.", keyspaceName));
+                Logger.Info(string.Format("Cannot DELETE keyspace:  {0}  because it not exists.", keyspaceName));
             }
         }
 
@@ -147,7 +147,7 @@ namespace Cassandra
             }
             //Cancel all pending operations and dispose every connection
             var connections = GetAllConnections();
-            _logger.Info("Disposing session, closing " + connections.Count + " connections.");
+            Logger.Info("Disposing session, closing " + connections.Count + " connections.");
             foreach (var c in connections)
             {
                 c.Dispose();
@@ -231,12 +231,9 @@ namespace Cassandra
                 {
                     continue;
                 }
-                var distance = this.Policies.LoadBalancingPolicy.Distance(host);
-                var hostPool = this.GetConnectionPool(host, distance);
-                foreach (var c in hostPool.OpenConnections)
-                {
-                    connections.Add(c);
-                }
+                var distance = Policies.LoadBalancingPolicy.Distance(host);
+                var hostPool = GetConnectionPool(host, distance);
+                connections.AddRange(hostPool.OpenConnections);
             }
             return connections;
         }
@@ -293,7 +290,7 @@ namespace Cassandra
 
         public Task<PreparedStatement> PrepareAsync(string query)
         {
-            var request = new PrepareRequest(this.BinaryProtocolVersion, query);
+            var request = new PrepareRequest(BinaryProtocolVersion, query);
             return new RequestHandler<PreparedStatement>(this, request, null).SendAsync();
         }
 
@@ -329,7 +326,7 @@ namespace Cassandra
                 return true;
             }
             
-            _logger.Info("Waiting for pending operations of " + connections.Count + " connections to complete.");
+            Logger.Info("Waiting for pending operations of " + connections.Count + " connections to complete.");
 
             var pendingTasks = connections.SelectMany(c => c.GetPending()).ToArray();
             return Task.WaitAll(pendingTasks, timeout);
@@ -346,7 +343,7 @@ namespace Cassandra
             }
             if (Cluster.Metadata != null)
             {
-                _logger.Warning("Setting host " + host.Address + " as DOWN");
+                Logger.Warning("Setting host " + host.Address + " as DOWN");
                 Cluster.Metadata.SetDownHost(host.Address, this);
             }
         }
