@@ -35,7 +35,7 @@ namespace Cassandra.IntegrationTests.Core
                 var builder = new Builder().WithDefaultKeyspace("system")
                                            .AddContactPoints("1.1.1.1") // IP address that drops (not rejects !) the inbound connection
                                            .WithQueryTimeout(500);
-                builder.SocketOptions.SetIdleTimeout(TimeSpan.FromMilliseconds(500));
+                builder.SocketOptions.SetSendTimeout(TimeSpan.FromMilliseconds(500));
                 var cluster = builder.Build();
                 cluster.Connect();
             }
@@ -64,7 +64,7 @@ namespace Cassandra.IntegrationTests.Core
                 var builder = new Builder().WithDefaultKeyspace("system")
                                            .AddContactPoints(Options.Default.IP_PREFIX + "1") // IP address that rejects
                                            .WithQueryTimeout(500);
-                builder.SocketOptions.SetIdleTimeout(TimeSpan.FromMilliseconds(500));
+                builder.SocketOptions.SetSendTimeout(TimeSpan.FromMilliseconds(500));
                 var cluster = builder.Build();
                 cluster.Connect();
             }

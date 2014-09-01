@@ -14,7 +14,6 @@
 //   limitations under the License.
 //
 
-﻿using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -44,16 +43,9 @@ namespace Cassandra
         /// <summary>
         /// Gets a list of connections already opened to the host
         /// </summary>
-        public IEnumerable<IConnection> OpenConnections 
-        { 
-            get
-            {
-                if (_connections == null)
-                {
-                    return new Connection[] { };
-                }
-                return _connections;
-            }
+        public IEnumerable<IConnection> OpenConnections
+        {
+            get { return _connections ?? new ConcurrentBag<IConnection>(); }
         }
 
         private Host Host { get; set; }
@@ -92,7 +84,8 @@ namespace Cassandra
 
             var connectionManager = ConnectionManagers.GetOrAdd(Host.Address, point => new ConnectionManager(ProtocolVersion));
             var connection = new Connection(ProtocolVersion, Host.Address, Configuration, connectionManager);
-            TaskHelper.WaitToComplete(connection.ConnectAsync(), Configuration.SocketOptions.SendTimeout);
+            TaskHelper.WaitToComplete(connection.ConnectAsync());
+            
             return connection;
         }
 

@@ -1,4 +1,4 @@
-//
+﻿//
 //      Copyright (C) 2012-2014 DataStax Inc.
 //
 //   Licensed under the Apache License, Version 2.0 (the "License");
@@ -224,6 +224,54 @@ namespace Cassandra
         {
             PreserveStackHandler(ex);
             return ex;
+        }
+
+        /// <summary>
+        /// Throws an exception when task execution time exceeded delay.
+        /// </summary>
+        /// <param name="task">the task to wait upon</param>
+        /// <param name="delay">delay interval</param>
+        /// <param name="exception">exception to throw</param>
+        /// <exception cref="TimeoutException" />
+        /// <exception cref="AggregateException" />
+        public static async Task SetTimeout(this Task task, TimeSpan delay, Func<Exception> exception)
+        {
+            var timedout = false;
+            await Task.WhenAny(new[]
+            {
+                task,
+                Task.Delay(delay).ContinueWith(p => { timedout = true; })
+            }).ConfigureAwait(false);
+
+            if (timedout)
+            {
+                throw exception();
+            }
+        }
+
+        /// <summary>
+        /// Throws an exception when task execution time exceeded delay.
+        /// </summary>
+        /// <param name="task">the task to wait upon</param>
+        /// <param name="delay">delay interval</param>
+        /// <param name="exception">exception to throw</param>
+        /// <exception cref="TimeoutException" />
+        /// <exception cref="AggregateException" />
+        public static async Task<T> SetTimeout<T>(this Task<T> task, TimeSpan delay, Func<Exception> exception)
+        {
+            var timedout = false;
+            await Task.WhenAny(new[]
+            {
+                task,
+                Task.Delay(delay).ContinueWith(p => { timedout = true; })
+            }).ConfigureAwait(false);
+
+            if (timedout)
+            {
+                throw exception();
+            }
+
+            return task.Result;
         }
     }
 }

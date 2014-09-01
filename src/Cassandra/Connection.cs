@@ -36,7 +36,6 @@ namespace Cassandra
         private static readonly Logger Logger = new Logger(typeof(Connection));
         private readonly ITcpClient _tcpClient;
         private int _disposed;
-        private static ConcurrentDictionary<short, short> _usedStreamIds = new ConcurrentDictionary<short, short>();
         
         /// <summary>
         /// Determines that the connection canceled pending operations.
@@ -171,7 +170,9 @@ namespace Cassandra
             AbstractResponse response;
             try
             {
-                response = await StartupAsync().ConfigureAwait(false);
+                response = await StartupAsync()
+                    .SetTimeout(Configuration.SocketOptions.SendTimeout, () => new TimeoutException())
+                    .ConfigureAwait(false);
             }
             catch (ProtocolErrorException ex)
             {
@@ -313,7 +314,7 @@ namespace Cassandra
                 int offset = 0, count;
                 try
                 {
-                    count = await _tcpClient.ReadAsync(buffer, offset, buffer.Length).ConfigureAwait(false);
+                    count = await _tcpClient.ReadAsync(buffer, offset, buffer.Length, _tokenSource.Token).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -507,9 +508,10 @@ namespace Cassandra
         {
             SendAsync(request).ContinueWith(p =>
             {
-                if (p.IsCanceled || p.IsFaulted)
+                if (p.Exception != null)
                 {
-                    callback(p.Exception, null);
+                    var exception = p.Exception.GetBaseException();
+                    callback(exception, null);
                 }
                 else
                 {
@@ -527,14 +529,6 @@ namespace Cassandra
             {
                 var state = await _writeQueue.TakeAsync().ConfigureAwait(false);
                 var streamId = await _connectionManager.GetStreamId().ConfigureAwait(false);
-                if (_usedStreamIds.ContainsKey(streamId))
-                {
-                    Debugger.Break();
-                }
-                else
-                {
-                    _usedStreamIds[streamId] = streamId;
-                }
 
                 Logger.Verbose(string.Format("Host {0}, stream #{1}: sending request {2}", Address, streamId, state.Request.GetType().Name));
 
@@ -550,7 +544,7 @@ namespace Cassandra
                     //We will not use the request, stop reference it.
                     state.Request = null;
                     //Start sending it
-                    await _tcpClient.WriteAsync(frameStream).ConfigureAwait(false);
+                    await _tcpClient.WriteAsync(frameStream, _tokenSource.Token).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

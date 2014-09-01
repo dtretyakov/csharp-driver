@@ -16,11 +16,11 @@ namespace Cassandra
     internal class StreamTcpClient : ITcpClient
     {
         protected static readonly Logger Logger = new Logger(typeof (StreamTcpClient));
-        private readonly TcpClient _tcpClient;
         private readonly Timer _idleTimer;
+        private readonly TcpClient _tcpClient;
 
         /// <summary>
-        /// Gets a socket stream.
+        ///     Gets a socket stream.
         /// </summary>
         protected Stream SocketStream { get; set; }
 
@@ -84,7 +84,10 @@ namespace Cassandra
         /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>
         public virtual async Task ConnectAsync()
         {
-            await _tcpClient.ConnectAsync(EndPoint.Address, EndPoint.Port).ConfigureAwait(false);
+            await _tcpClient.ConnectAsync(EndPoint.Address, EndPoint.Port)
+                            .SetTimeout(Options.SendTimeout, () => new SocketException((int) SocketError.TimedOut))
+                            .ConfigureAwait(false);
+
             Logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", EndPoint));
             SocketStream = _tcpClient.GetStream();
         }
@@ -96,37 +99,6 @@ namespace Cassandra
         {
             ResetIdleTimer();
             return stream.CopyToAsync(SocketStream, _tcpClient.SendBufferSize, cancellationToken);
-        }
-
-        private void Disconnect(object state)
-        {
-            Logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", EndPoint));
-
-            Action disconnected = Disconnected;
-            if (disconnected != null)
-            {
-                disconnected();
-            }
-        }
-
-        private void ResetIdleTimer()
-        {
-            Timer idleTimer = _idleTimer;
-            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
-            {
-                idleTimer.Change(Options.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
-                Logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", EndPoint));
-            }
-        }
-
-        private void StopIdleTimer()
-        {
-            Timer idleTimer = _idleTimer;
-            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
-            {
-                idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                Logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", EndPoint));
-            }
         }
 
         /// <summary>
@@ -157,6 +129,37 @@ namespace Cassandra
             catch
             {
                 //We should not mind if the socket shutdown or close methods throw an exception
+            }
+        }
+
+        private void Disconnect(object state)
+        {
+            Logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", EndPoint));
+
+            Action disconnected = Disconnected;
+            if (disconnected != null)
+            {
+                disconnected();
+            }
+        }
+
+        private void ResetIdleTimer()
+        {
+            Timer idleTimer = _idleTimer;
+            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
+            {
+                idleTimer.Change(Options.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
+                Logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", EndPoint));
+            }
+        }
+
+        private void StopIdleTimer()
+        {
+            Timer idleTimer = _idleTimer;
+            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
+            {
+                idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                Logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", EndPoint));
             }
         }
     }
