@@ -88,6 +88,11 @@ namespace Cassandra
                             .SetTimeout(Options.SendTimeout, () => new SocketException((int) SocketError.TimedOut))
                             .ConfigureAwait(false);
 
+            if (!_tcpClient.Connected)
+            {
+                return;
+            }
+
             Logger.Verbose(String.Format("Connection {0}: Socket connected, start reading using Stream interface.", EndPoint));
             SocketStream = _tcpClient.GetStream();
         }
