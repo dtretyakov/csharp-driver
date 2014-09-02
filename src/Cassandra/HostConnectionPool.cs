@@ -75,7 +75,7 @@ namespace Cassandra
         {
             Logger.Info("Creating a new connection to the host " + Host);
 
-            var connection = new Connection(ProtocolVersion, Host.Address, Configuration, new ConnectionManager(ProtocolVersion));
+            var connection = new Connection(ProtocolVersion, Host.Address, Configuration);
             TaskHelper.WaitToComplete(connection.ConnectAsync());
             
             return connection;

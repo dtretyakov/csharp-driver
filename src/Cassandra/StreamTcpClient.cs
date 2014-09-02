@@ -16,7 +16,6 @@ namespace Cassandra
     internal class StreamTcpClient : ITcpClient
     {
         protected static readonly Logger Logger = new Logger(typeof (StreamTcpClient));
-        private readonly Timer _idleTimer;
         private readonly TcpClient _tcpClient;
 
         /// <summary>
@@ -57,11 +56,7 @@ namespace Cassandra
             if (Options.TcpNoDelay != null)
             {
                 _tcpClient.NoDelay = Options.TcpNoDelay.Value;
-            }
-            if (Options.IdleTimeout > TimeSpan.Zero)
-            {
-                _idleTimer = _idleTimer ?? new Timer(PingServer);
-            }
+            }            
         }
 
         public IPEndPoint EndPoint { get; private set; }
@@ -97,7 +92,6 @@ namespace Cassandra
         /// </summary>
         public Task WriteAsync(Stream stream, CancellationToken cancellationToken = default(CancellationToken))
         {
-            ResetIdleTimer();
             return stream.CopyToAsync(SocketStream, _tcpClient.SendBufferSize, cancellationToken);
         }
 
@@ -107,14 +101,11 @@ namespace Cassandra
         /// </summary>
         public Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default(CancellationToken))
         {
-            ResetIdleTimer();
             return SocketStream.ReadAsync(buffer, offset, count, cancellationToken);
         }
 
         public void Dispose()
         {
-            StopIdleTimer();
-
             try
             {
                 if (_tcpClient == null)
@@ -130,30 +121,6 @@ namespace Cassandra
             catch
             {
                 //We should not mind if the socket shutdown or close methods throw an exception
-            }
-        }
-
-        private void PingServer(object state)
-        {
-        }
-
-        private void ResetIdleTimer()
-        {
-            Timer idleTimer = _idleTimer;
-            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
-            {
-                idleTimer.Change(Options.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
-                Logger.Verbose(String.Format("Connection {0}: idle timer has been resetted.", EndPoint));
-            }
-        }
-
-        private void StopIdleTimer()
-        {
-            Timer idleTimer = _idleTimer;
-            if (Options.IdleTimeout > TimeSpan.Zero && idleTimer != null)
-            {
-                idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                Logger.Verbose(String.Format("Connection {0}: idle timer has been stopped.", EndPoint));
             }
         }
     }

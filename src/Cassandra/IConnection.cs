@@ -8,6 +8,7 @@ namespace Cassandra
     internal interface IConnection : IDisposable
     {
         IFrameCompressor Compressor { get; }
+
         IPEndPoint Address { get; }
 
         /// <summary>
@@ -32,8 +33,12 @@ namespace Cassandra
         string Keyspace { get; set; }
 
         ProtocolOptions Options { get; }
+
         byte ProtocolVersion { get; }
+
         Configuration Configuration { get; }
+
+        int MaxConcurrentRequests { get; }
 
         /// <summary>
         ///     The event that represents a event RESPONSE from a Cassandra node
@@ -41,14 +46,14 @@ namespace Cassandra
         event CassandraEventHandler CassandraEventResponse;
 
         Task ConnectAsync();
-        
+
         /// <summary>
         ///     Sends a new request if possible. If it is not possible it queues it up.
         /// </summary>
         Task<AbstractResponse> SendAsync(IRequest request);
 
         /// <summary>
-        /// Retrieves a list of pending operations.
+        ///     Retrieves a list of pending operations.
         /// </summary>
         /// <returns>Pending tasks.</returns>
         IEnumerable<Task> GetPending();
