@@ -17,7 +17,6 @@
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
-using System.Net;
 using System.Threading;
 
 namespace Cassandra
@@ -31,12 +30,6 @@ namespace Cassandra
         private ConcurrentBag<IConnection> _connections;
         private readonly object _poolCreationLock = new object();
         private int _creating;
-
-        /// <summary>
-        /// Stores the available stream ids for each host connection.
-        /// </summary>
-        private static readonly ConcurrentDictionary<IPEndPoint, IConnectionManager> ConnectionManagers =
-            new ConcurrentDictionary<IPEndPoint, IConnectionManager>();
 
         private Configuration Configuration { get; set; }
 
@@ -82,8 +75,7 @@ namespace Cassandra
         {
             Logger.Info("Creating a new connection to the host " + Host);
 
-            var connectionManager = ConnectionManagers.GetOrAdd(Host.Address, point => new ConnectionManager(ProtocolVersion));
-            var connection = new Connection(ProtocolVersion, Host.Address, Configuration, connectionManager);
+            var connection = new Connection(ProtocolVersion, Host.Address, Configuration, new ConnectionManager(ProtocolVersion));
             TaskHelper.WaitToComplete(connection.ConnectAsync());
             
             return connection;

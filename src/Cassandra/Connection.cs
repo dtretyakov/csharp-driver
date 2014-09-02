@@ -17,10 +17,8 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Net;
+﻿using System.IO;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -318,7 +316,7 @@ namespace Cassandra
                 }
                 catch (Exception e)
                 {
-                    CancelPending(e);
+                    CancelPending(e.GetBaseException());
                     return;
                 }
 
@@ -430,8 +428,6 @@ namespace Cassandra
                 } while (count > 0);
 
             } while (!_tokenSource.IsCancellationRequested);
-
-            Debugger.Break();
         }
 
         private void ProcessEventResponse(AbstractResponse response)
@@ -502,25 +498,6 @@ namespace Cassandra
         }
 
         /// <summary>
-        /// Sends a new request if possible and executes the callback when the response is parsed. If it is not possible it queues it up.
-        /// </summary>
-        public void Send(IRequest request, Action<Exception, AbstractResponse> callback)
-        {
-            SendAsync(request).ContinueWith(p =>
-            {
-                if (p.Exception != null)
-                {
-                    var exception = p.Exception.GetBaseException();
-                    callback(exception, null);
-                }
-                else
-                {
-                    callback(null, p.Result);
-                }
-            });
-        }
-
-        /// <summary>
         /// Try to write the item provided. Thread safe.
         /// </summary>
         private async void WriteHandler()
@@ -528,6 +505,12 @@ namespace Cassandra
             do
             {
                 var state = await _writeQueue.TakeAsync().ConfigureAwait(false);
+                if (_tokenSource.IsCancellationRequested)
+                {
+                    state.Response.SetException(new SocketException((int)SocketError.NotConnected));
+                    return;
+                }
+
                 var streamId = await _connectionManager.GetStreamId().ConfigureAwait(false);
 
                 Logger.Verbose(string.Format("Host {0}, stream #{1}: sending request {2}", Address, streamId, state.Request.GetType().Name));
@@ -551,19 +534,30 @@ namespace Cassandra
                     Logger.Error(ex);
 
                     // The request was not written
-                    _pendingOperations.TryRemove(streamId, out state);
-                    _connectionManager.AddStreamId(streamId);
+                    if (_pendingOperations.TryRemove(streamId, out state))
+                    {
+                        state.Response.SetException(ex.GetBaseException());
+                    }
 
-                    state.Response.SetException(ex);
+                    _connectionManager.AddStreamId(streamId);
                 }
             } while (!_tokenSource.IsCancellationRequested);
-
-            Debugger.Break();
         }
 
         public IEnumerable<Task> GetPending()
         {
-            return _pendingOperations.Select(p => p.Value.Response.Task);
+            var distinctTasks = new HashSet<Task>();
+            foreach (var state in _writeQueue)
+            {
+                distinctTasks.Add(state.Response.Task);
+            }
+
+            foreach (var state in _pendingOperations)
+            {
+                distinctTasks.Add(state.Value.Response.Task);
+            }
+
+            return distinctTasks;
         }
     }
 }

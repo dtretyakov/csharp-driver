@@ -60,7 +60,7 @@ namespace Cassandra
             }
             if (Options.IdleTimeout > TimeSpan.Zero)
             {
-                _idleTimer = _idleTimer ?? new Timer(Disconnect);
+                _idleTimer = _idleTimer ?? new Timer(PingServer);
             }
         }
 
@@ -72,11 +72,6 @@ namespace Cassandra
         {
             get { return _tcpClient.ReceiveBufferSize; }
         }
-
-        /// <summary>
-        ///     Event that is fired when the host is closing the connection.
-        /// </summary>
-        public event Action Disconnected;
 
         /// <summary>
         ///     Connects synchronously to the host and starts reading
@@ -129,6 +124,7 @@ namespace Cassandra
 
                 //Try to close it.
                 //Some operations could make the socket to dispose itself
+                _tcpClient.Client.Shutdown(SocketShutdown.Both);
                 _tcpClient.Close();
             }
             catch
@@ -137,15 +133,8 @@ namespace Cassandra
             }
         }
 
-        private void Disconnect(object state)
+        private void PingServer(object state)
         {
-            Logger.Verbose(String.Format("Connection {0}: idle timeout has been expired.", EndPoint));
-
-            Action disconnected = Disconnected;
-            if (disconnected != null)
-            {
-                disconnected();
-            }
         }
 
         private void ResetIdleTimer()

@@ -91,11 +91,6 @@ namespace Cassandra
         public int ReceiveBufferSize { get; private set; }
 
         /// <summary>
-        ///     Event that is fired when the host is closing the connection.
-        /// </summary>
-        public event Action Disconnected;
-
-        /// <summary>
         ///     Event that gets fired when new data is received.
         /// </summary>
         public event Action<byte[], int> DataReceived;
@@ -357,11 +352,6 @@ namespace Cassandra
         protected virtual void OnClosing()
         {
             _isClosing = true;
-            if (Disconnected != null)
-            {
-                Disconnected();
-            }
-
             StopIdleTimer();
         }
 

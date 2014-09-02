@@ -14,11 +14,6 @@ namespace Cassandra
         int ReceiveBufferSize { get; }
 
         /// <summary>
-        ///     Event that is fired when the host is closing the connection.
-        /// </summary>
-        event Action Disconnected;
-
-        /// <summary>
         ///     Connects synchronously to the host and starts reading
         /// </summary>
         /// <exception cref="SocketException">Throws a SocketException when the connection could not be established with the host</exception>

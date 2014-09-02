@@ -14,12 +14,8 @@
 //   limitations under the License.
 //
 
-﻿using Moq;
 using NUnit.Framework;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace Cassandra.IntegrationTests.Core
 {
@@ -63,26 +59,6 @@ namespace Cassandra.IntegrationTests.Core
             Assert.AreEqual(expected, decision.DecisionType);
             decision = requestHandler.GetRetryDecision(new TruncateException(null));
             Assert.AreEqual(expected, decision.DecisionType);
-        }
-
-        [Test]
-        public void RequestHandlerRetriesTest()
-        {
-            //This statement will fail, then we will fake the syntax error as a ReadTimeout
-            var statement = new SimpleStatement("SELECT WILL FAIL").SetRetryPolicy(DowngradingConsistencyRetryPolicy.Instance);
-            var request = Session.GetRequest(statement);
-            //We will need a mock to fake the responses of Cassandra
-            var mock = new Moq.Mock<RequestHandler<RowSet>>(Session, request, statement)
-            {
-                CallBase = true
-            };
-            var requestHandler = mock.Object;
-            //Expect Retry method to be called with a lower consistency level
-            mock.Setup(r => r.Retry(It.Is<ConsistencyLevel?>(c => c == ConsistencyLevel.Two))).Verifiable();
-            //Fake a Error Result
-            requestHandler.ResponseHandler(new ReadTimeoutException(ConsistencyLevel.Three, 2, 3, false), null);
-
-            mock.Verify();
         }
     }
 }

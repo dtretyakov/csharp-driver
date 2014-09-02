@@ -48,12 +48,6 @@ namespace Cassandra
         Task<AbstractResponse> SendAsync(IRequest request);
 
         /// <summary>
-        ///     Sends a new request if possible and executes the callback when the response is parsed. If it is not possible it
-        ///     queues it up.
-        /// </summary>
-        void Send(IRequest request, Action<Exception, AbstractResponse> callback);
-
-        /// <summary>
         /// Retrieves a list of pending operations.
         /// </summary>
         /// <returns>Pending tasks.</returns>
