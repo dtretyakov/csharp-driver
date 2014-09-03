@@ -203,7 +203,45 @@ namespace Cassandra
 
             if (IsHealthy)
                 BeginReading();
+
+            if (_socketOptions.IdleTimeoutMillis > 0)
+            {
+                _idleTimer = new Timer(PingServer);
+                ResetIdleTimer();
+            }
         }
+
+        private void ResetIdleTimer()
+        {
+            if (_socketOptions.IdleTimeoutMillis > 0 && _idleTimer != null)
+            {
+                _idleTimer.Change(_socketOptions.IdleTimeoutMillis, Timeout.Infinite);
+            }
+        }
+
+        private void StopIdleTimer()
+        {
+            if (_socketOptions.IdleTimeoutMillis > 0 && _idleTimer != null)
+            {
+                _idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+        }
+
+        private void PingServer(object state)
+        {
+            var streamId = AllocateStreamId();
+
+            try
+            {
+                ExecuteOptions(streamId);
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e);
+            }
+        }
+
+        private Timer _idleTimer;
 
         public void Dispose()
         {
@@ -214,6 +252,8 @@ namespace Cassandra
             {
                 if (_socket != null)
                 {
+                    StopIdleTimer();
+
                     _socket.Shutdown(SocketShutdown.Both);
                     _socket.Disconnect(_socketOptions.ReuseAddress ?? false);
                     _socket.Close();
@@ -437,6 +477,9 @@ namespace Cassandra
                         }
 
                         int bytesReadCount = _socketStream.EndRead(ar);
+
+                        ResetIdleTimer();
+
                         if (bytesReadCount == 0)
                         {
                             if (_alreadyDisposed.IsTaken())
@@ -581,6 +624,7 @@ namespace Cassandra
                             _frameReadTimers[streamId].Change(_queryAbortTimeout, Timeout.Infinite);
                     }
                     frame.Buffer.WriteTo(_socketStream);
+                    ResetIdleTimer();
                 }
             }
             catch (InvalidQueryException)

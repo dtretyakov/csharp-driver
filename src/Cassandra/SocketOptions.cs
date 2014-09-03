@@ -31,10 +31,16 @@ namespace Cassandra
         private int? _sendBufferSize;
         private int? _soLinger;
         private bool? _tcpNoDelay;
+        private int _idleTimeoutMillis;
 
         public int ConnectTimeoutMillis
         {
             get { return _connectTimeoutMillis; }
+        }
+        
+        public int IdleTimeoutMillis
+        {
+            get { return _idleTimeoutMillis; }
         }
 
         public bool? KeepAlive
@@ -70,6 +76,12 @@ namespace Cassandra
         public SocketOptions SetConnectTimeoutMillis(int connectTimeoutMillis)
         {
             _connectTimeoutMillis = connectTimeoutMillis;
+            return this;
+        }
+        
+        public SocketOptions SetIdleTimeoutMillis(int idleTimeoutMillis)
+        {
+            _idleTimeoutMillis = idleTimeoutMillis;
             return this;
         }
 
