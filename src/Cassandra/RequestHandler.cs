@@ -105,7 +105,7 @@ namespace Cassandra
                     ((IQueryRequest)_request).PagingState = pagingState;
                     var task = new RequestHandler<RowSet>(_session, _request, _statement).SendAsync();
                     TaskHelper.WaitToComplete(task, _session.Configuration.ClientOptions.QueryAbortTimeout);
-                    return (RowSet)(object)task.Result;
+                    return task.Result;
                 };
             }
             return rs;

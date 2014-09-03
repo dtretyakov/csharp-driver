@@ -39,7 +39,6 @@ namespace Cassandra
         private readonly AsyncProducerConsumerCollection<short> _availableStreams;
 
         private readonly object _keyspaceLock = new object();
-
         private readonly ITcpClient _tcpClient;
 
         /// <summary>
@@ -49,13 +48,17 @@ namespace Cassandra
         private readonly CancellationTokenSource _tokenSource = new CancellationTokenSource();
 
         private int _disposed;
-        private Timer _idleTimer;
         private volatile string _keyspace;
 
         /// <summary>
         ///     Contains the requests that were sent through the wire and that hasn't been received yet.
         /// </summary>
         private ConcurrentDictionary<short, OperationState> _pendingOperations;
+
+        /// <summary>
+        ///     Timer which used to monitor connectivity with cassandra node.
+        /// </summary>
+        private Timer _watchdogTimer;
 
         /// <summary>
         ///     Contains pending request messages for sending.
@@ -158,7 +161,7 @@ namespace Cassandra
                     {
                         return;
                     }
-                    Logger.Info(string.Format("Host {0}: connection established, switching to keyspace {1}", Address, value));
+                    Logger.Info(String.Format("Host {0}: connection established, switching to keyspace {1}", Address, value));
                     _keyspace = value;
                     var request = new QueryRequest(ProtocolVersion, String.Format("USE \"{0}\"", value), false, QueryProtocolOptions.Default);
                     TaskHelper.WaitToComplete(SendAsync(request), Configuration.SocketOptions.SendTimeout);
@@ -210,10 +213,11 @@ namespace Cassandra
                 throw new DriverInternalError("Expected READY or AUTHENTICATE, obtained " + response.GetType().Name);
             }
 
+            // Run watchdog timer if specified idle timeout interval
             if (Configuration.SocketOptions.IdleTimeout > TimeSpan.Zero)
             {
-                _idleTimer = new Timer(PingServer);
-                ResetIdleTimer();
+                _watchdogTimer = new Timer(PingServer);
+                ResetWatchdogTimer();
             }
         }
 
@@ -225,7 +229,7 @@ namespace Cassandra
                 return;
             }
 
-            StopIdleTimer();
+            StopWatchdogTimer();
             _tcpClient.Dispose();
         }
 
@@ -241,12 +245,7 @@ namespace Cassandra
                 return tcs.Task;
             }
 
-            // thread safe write queue
-            var state = new OperationState
-            {
-                Request = request
-            };
-
+            var state = new OperationState {Request = request};
             _writeQueue.Add(state);
 
             return state.Response.Task;
@@ -281,21 +280,21 @@ namespace Cassandra
             }
         }
 
-        private void ResetIdleTimer()
+        private void ResetWatchdogTimer()
         {
-            if (Configuration.SocketOptions.IdleTimeout > TimeSpan.Zero && _idleTimer != null)
+            if (Configuration.SocketOptions.IdleTimeout > TimeSpan.Zero && _watchdogTimer != null)
             {
-                _idleTimer.Change(Configuration.SocketOptions.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
-                Logger.Verbose(String.Format("Host {0}: idle timer has been resetted.", Address));
+                _watchdogTimer.Change(Configuration.SocketOptions.IdleTimeout, TimeSpan.FromMilliseconds(Timeout.Infinite));
+                Logger.Verbose(String.Format("Host {0}: watchdog timer has been resetted.", Address));
             }
         }
 
-        private void StopIdleTimer()
+        private void StopWatchdogTimer()
         {
-            if (Configuration.SocketOptions.IdleTimeout > TimeSpan.Zero && _idleTimer != null)
+            if (Configuration.SocketOptions.IdleTimeout > TimeSpan.Zero && _watchdogTimer != null)
             {
-                _idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                Logger.Verbose(String.Format("Host {0}: idle timer has been stopped.", Address));
+                _watchdogTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                Logger.Verbose(String.Format("Host {0}: watchdog timer has been stopped.", Address));
             }
         }
 
@@ -382,8 +381,8 @@ namespace Cassandra
             AsyncProducerConsumerCollection<OperationState> writeQueue = Interlocked.Exchange(ref _writeQueue,
                 new AsyncProducerConsumerCollection<OperationState>());
 
-            Logger.Info(string.Format("Host {0}: canceling pending operations {1} and write queue {2}", Address, pendingOperations.Count,
-                writeQueue.Count));
+            Logger.Info(String.Format("Host {0}: canceling pending operations {1} and write queue {2}",
+                Address, pendingOperations.Count, writeQueue.Count));
 
             foreach (var operation in pendingOperations)
             {
@@ -413,7 +412,7 @@ namespace Cassandra
                 try
                 {
                     count = await _tcpClient.ReadAsync(buffer, offset, buffer.Length, _tokenSource.Token).ConfigureAwait(false);
-                    ResetIdleTimer();
+                    ResetWatchdogTimer();
                 }
                 catch (Exception e)
                 {
@@ -426,8 +425,6 @@ namespace Cassandra
                     CancelPending(new SocketException((int) SocketError.Disconnecting));
                     return;
                 }
-
-                Logger.Verbose(string.Format("Host {0}: received {1} bytes", Address, count));
 
                 // Process received data
                 do
@@ -457,23 +454,22 @@ namespace Cassandra
                             Logger.Error("Not a response header");
                         }
 
-                        Logger.Verbose(string.Format("Host {0}, stream #{1}: processing frame with header {2} and body {3}", Address, header.StreamId,
-                            headerSize, header.BodyLength));
-
                         offset += headerSize;
                         count -= headerSize;
 
-                        if (header.Operation == FrameOperation.Event)
+                        switch (header.Operation)
                         {
-                            state = new OperationState();
-                        }
-                        else
-                        {
-                            if (!_pendingOperations.TryGetValue(header.StreamId, out state))
-                            {
-                                Logger.Error(string.Format("Host {0}, stream #{1}: unable to find response handler", Address, header.StreamId));
-                                continue;
-                            }
+                            case FrameOperation.Event:
+                                state = new OperationState();
+                                break;
+
+                            default:
+                                if (!_pendingOperations.TryGetValue(header.StreamId, out state))
+                                {
+                                    Logger.Error(String.Format("Host {0}, stream #{1}: unable to find response handler", Address, header.StreamId));
+                                    continue;
+                                }
+                                break;
                         }
 
                         state.Header = header;
@@ -482,44 +478,10 @@ namespace Cassandra
                     int appendedBytes = state.AppendBody(buffer, offset, count);
                     if (state.IsBodyComplete)
                     {
-                        Logger.Verbose(string.Format("Host {0}, stream #{1}: received response {2}",
+                        Logger.Verbose(String.Format("Host {0}, stream #{1}: received response {2}",
                             Address, state.Header.StreamId, state.Header.Operation));
 
-                        AbstractResponse response = null;
-                        try
-                        {
-                            response = ReadParseResponse(state.Header, state.BodyStream);
-                        }
-                        catch (Exception ex)
-                        {
-                            state.Response.SetException(ex);
-                        }
-
-                        var errorResponse = response as ErrorResponse;
-                        if (errorResponse != null)
-                        {
-                            state.Response.SetException(errorResponse.Output.CreateException());
-                        }
-                        else
-                        {
-                            state.Response.SetResult(response);
-                        }
-
-                        switch (state.Header.Operation)
-                        {
-                            case FrameOperation.Event:
-                                if (response != null)
-                                {
-                                    ProcessEventResponse(response);
-                                }
-                                break;
-                            default:
-                                //Remove from pending
-                                _pendingOperations.TryRemove(state.Header.StreamId, out state);
-                                //Release the streamId
-                                _availableStreams.Add(state.Header.StreamId);
-                                break;
-                        }
+                        ProcessResponse(state);
 
                         // Response was processed
                         state = null;
@@ -531,11 +493,51 @@ namespace Cassandra
             } while (!_tokenSource.IsCancellationRequested);
         }
 
+        private void ProcessResponse(OperationState state)
+        {
+            AbstractResponse response = null;
+            try
+            {
+                response = ReadParseResponse(state.Header, state.BodyStream);
+            }
+            catch (Exception ex)
+            {
+                state.Response.SetException(ex);
+            }
+
+            // Set response
+            if (response != null)
+            {
+                switch (state.Header.Operation)
+                {
+                    case FrameOperation.Error:
+                        var errorResponse = (ErrorResponse) response;
+                        state.Response.SetException(errorResponse.Output.CreateException());
+                        break;
+
+                    case FrameOperation.Event:
+                        ProcessEventResponse(response);
+                        break;
+
+                    default:
+                        state.Response.SetResult(response);
+                        break;
+                }
+            }
+
+            // Release stream identifier
+            if (state.Header.StreamId >= 0)
+            {
+                _pendingOperations.TryRemove(state.Header.StreamId, out state);
+                _availableStreams.Add(state.Header.StreamId);
+            }
+        }
+
         private void ProcessEventResponse(AbstractResponse response)
         {
             if (!(response is EventResponse))
             {
-                Logger.Error(string.Format("Host {0}: unexpected response type for event: {1}", Address, response.GetType().Name));
+                Logger.Error(String.Format("Host {0}: unexpected response type for event {1}", Address, response.GetType().Name));
                 return;
             }
             if (CassandraEventResponse != null)
@@ -582,18 +584,21 @@ namespace Cassandra
         {
             do
             {
-                OperationState state = await _writeQueue.TakeAsync().ConfigureAwait(false);
+                OperationState newState = await _writeQueue.TakeAsync().ConfigureAwait(false);
                 if (_tokenSource.IsCancellationRequested)
                 {
-                    state.Response.SetException(new SocketException((int) SocketError.NotConnected));
+                    newState.Response.SetException(new SocketException((int) SocketError.NotConnected));
                     return;
                 }
 
                 short streamId = await _availableStreams.TakeAsync().ConfigureAwait(false);
+                OperationState state = _pendingOperations.AddOrUpdate(streamId, newState, (id, operationState) =>
+                {
+                    Logger.Error(String.Format("Host {0}: stream identifier #{1} already in use.", Address, id));
+                    return newState;
+                });
 
-                Logger.Verbose(string.Format("Host {0}, stream #{1}: sending request {2}", Address, streamId, state.Request.GetType().Name));
-
-                _pendingOperations.AddOrUpdate(streamId, state, (k, oldValue) => state);
+                Logger.Verbose(String.Format("Host {0}, stream #{1}: sending request {2}", Address, streamId, state.Request.GetType().Name));
 
                 //At this point:
                 //We have a valid stream id
@@ -606,7 +611,7 @@ namespace Cassandra
                     state.Request = null;
                     //Start sending it
                     await _tcpClient.WriteAsync(frameStream, _tokenSource.Token).ConfigureAwait(false);
-                    ResetIdleTimer();
+                    ResetWatchdogTimer();
                 }
                 catch (Exception ex)
                 {
@@ -617,7 +622,6 @@ namespace Cassandra
                     {
                         state.Response.SetException(ex.GetBaseException());
                     }
-
                     _availableStreams.Add(streamId);
                 }
             } while (!_tokenSource.IsCancellationRequested);
